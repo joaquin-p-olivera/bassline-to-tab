@@ -107,6 +107,54 @@ Run `bassline-to-tab --help` for all options. Useful ones:
 | `--demucs-cmd` | autodetect | e.g. `"python3 -m demucs"` inside a virtualenv. |
 | `-v` / `-vv` | | Debug logging, including every raw note detected. |
 
+## Web version
+
+A small web server (`bassline-to-tab-server`) lets you upload a song from the
+browser and shows the tab on the page, with downloads for the tab and the MIDI
+file. It runs the CLI as a subprocess, one job at a time.
+
+```bash
+cargo run --release --features server --bin bassline-to-tab-server
+# then open http://localhost:7860
+```
+
+It needs `bassline-to-tab` next to it (or in `PATH`) and, for full songs,
+Demucs. Settings come from environment variables:
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `PORT` | 7860 | Port to listen on. |
+| `MAX_UPLOAD_MB` | 50 | Largest accepted upload. |
+| `MAX_QUEUE` | 4 | Jobs allowed to wait; more get a 503. |
+| `JOB_TIMEOUT_SECS` | 3600 | A job running longer is killed. |
+| `RESULT_TTL_SECS` | 3600 | How long a finished tab stays available. |
+| `WORK_DIR` | system temp dir | Where uploads and results are stored. |
+| `BASSLINE_CLI` | next to the server | Path of the `bassline-to-tab` executable. |
+
+API: `POST /api/jobs` (multipart: `audio`, `tuning`, `frets`, `bpm`, `separate`)
+returns `{"id": ...}`; `GET /api/jobs/{id}` returns the status and the tab;
+`GET /api/jobs/{id}/midi` downloads the MIDI.
+
+### Docker and Hugging Face Spaces
+
+The `Dockerfile` builds both binaries and installs Demucs on CPU-only PyTorch.
+
+```bash
+docker build -t bassline-to-tab .
+docker run --rm -p 7860:7860 bassline-to-tab
+```
+
+To publish it on a free [Hugging Face Space](https://huggingface.co/new-space)
+(choose the **Docker** SDK and make it **private**, since you will upload
+copyrighted songs), commit your changes and run:
+
+```bash
+deploy/huggingface/deploy.sh https://huggingface.co/spaces/<user>/<space>
+```
+
+The free CPU tier has 2 vCPU and 16 GB of RAM, so separating a song takes a few
+minutes. Anyone who can open the Space can use it and consume its CPU.
+
 ## Limitations
 
 - **Rhythm** is quantized to sixteenths in 4/4, with a single constant tempo.
@@ -131,8 +179,8 @@ Run `bassline-to-tab --help` for all options. Useful ones:
 ## Development
 
 ```bash
-cargo test            # unit tests + end-to-end test on a synthetic riff
-cargo clippy --all-targets
+cargo test --all-features   # unit tests + end-to-end test on a synthetic riff
+cargo clippy --all-targets --all-features
 cargo fmt
 ```
 
