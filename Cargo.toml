@@ -1,0 +1,23 @@
+[package]
+name = "bassline-to-tab"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.91"
+description = "Transcribe the bass line of a song into bass tablature"
+license = "MIT"
+repository = "https://github.com/joaquin-p-olivera/bassline-to-tab"
+readme = "README.md"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+env_logger = "0.11"
+log = "0.4"
+midly = "0.5"
+rubato = "5"
+symphonia = { version = "0.6", features = ["all"] }
+tract-onnx = "0.23"
+
+[profile.dev.package."*"]
+# Dependencies (tract in particular) are unusably slow without optimizations.
+opt-level = 3

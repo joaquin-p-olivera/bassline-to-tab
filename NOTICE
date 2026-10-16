@@ -1,0 +1,8 @@
+bassline-to-tab
+Copyright (c) 2026 Joaquín
+
+This product includes the Basic Pitch model (models/basic_pitch_nmp.onnx) and a
+Rust port of its note-creation algorithm (src/notes.rs).
+Basic Pitch, Copyright 2022 Spotify AB, licensed under the Apache License 2.0.
+See models/LICENSE-basic-pitch and models/NOTICE-basic-pitch.
+Source: https://github.com/spotify/basic-pitch (version 0.4.0)
