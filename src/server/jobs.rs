@@ -255,12 +255,7 @@ impl Jobs {
             command.arg("--no-separate");
         }
         // Own process group, so a timeout can also kill Demucs, which the CLI spawns.
-        command
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true)
-            .process_group(0);
+        command.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::piped()).kill_on_drop(true).process_group(0);
 
         let mut child = command.spawn().with_context(|| format!("cannot start {}", self.config.cli.display()))?;
         let pid = child.id();

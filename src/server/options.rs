@@ -106,10 +106,7 @@ mod tests {
         options.set_field("frets", "21").unwrap();
         options.set_field("bpm", "96.5").unwrap();
         options.set_field("separate", "false").unwrap();
-        assert_eq!(
-            options,
-            JobOptions { tuning: "drop-d".to_string(), frets: 21, bpm: Some(96.5), separate: false }
-        );
+        assert_eq!(options, JobOptions { tuning: "drop-d".to_string(), frets: 21, bpm: Some(96.5), separate: false });
     }
 
     #[test]

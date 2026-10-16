@@ -116,7 +116,8 @@ async fn receive_upload(
         }
 
         let file_name = field.file_name().unwrap_or_default().to_string();
-        let extension = options::audio_extension(&file_name).map_err(|error| ApiError::bad_request(error.to_string()))?;
+        let extension =
+            options::audio_extension(&file_name).map_err(|error| ApiError::bad_request(error.to_string()))?;
         let path = dir.join(format!("input.{extension}"));
         let mut file = tokio::fs::File::create(&path).await.map_err(ApiError::internal)?;
         let mut written: u64 = 0;
@@ -165,24 +166,15 @@ async fn create_job(
 }
 
 async fn job_status(State(state): State<Arc<AppState>>, Path(id): Path<String>) -> Result<Json<JobView>, ApiError> {
-    state
-        .jobs
-        .view(&id)
-        .map(Json)
-        .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "Unknown or expired job"))
+    state.jobs.view(&id).map(Json).ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "Unknown or expired job"))
 }
 
 async fn job_midi(State(state): State<Arc<AppState>>, Path(id): Path<String>) -> Result<Response, ApiError> {
-    let path = state
-        .jobs
-        .midi_path(&id)
-        .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "No MIDI file for this job"))?;
+    let path =
+        state.jobs.midi_path(&id).ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "No MIDI file for this job"))?;
     let bytes = tokio::fs::read(path).await.map_err(ApiError::internal)?;
     Ok((
-        [
-            (header::CONTENT_TYPE, "audio/midi"),
-            (header::CONTENT_DISPOSITION, "attachment; filename=\"bassline.mid\""),
-        ],
+        [(header::CONTENT_TYPE, "audio/midi"), (header::CONTENT_DISPOSITION, "attachment; filename=\"bassline.mid\"")],
         bytes,
     )
         .into_response())
