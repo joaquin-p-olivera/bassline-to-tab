@@ -23,6 +23,13 @@ song file ─► decode (Web Audio API)
 ```
 
 Everything heavy runs in a Web Worker so the page stays responsive.
+Two pre-trained neural networks do the listening (HTDemucs separates the
+bass, Basic Pitch detects pitches); the music logic that turns their output
+into a playable tab is this project's own: octave correction, onset
+refinement, tempo and tuning estimation, and Viterbi fingering.
+
+**→ [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** explains every stage, the
+files and functions that implement it, and what is third-party versus own.
 
 Features:
 - **Play along**: the tab follows the audio (bass only or full mix) with a
@@ -56,25 +63,31 @@ Without WebGPU the app still transcribes an **isolated** bass recording
 
 ## Limitations
 
-- **Speed on phones is untested.** Separation runs a large model over
-  ~8-second chunks; expect anything from seconds to a few minutes per song
-  depending on the GPU. The app shows how long each stage took.
+- **Separation is slow.** On a Mac in Chrome it takes ~35–45 s per ~8 s
+  chunk, so a 4-minute song needs ~30 minutes (transcription afterwards takes
+  seconds). Phones are untested. See [#2](https://github.com/joaquin-p-olivera/bassline-to-tab/issues/2).
+  Keep the computer awake while it runs; sleep can interrupt the GPU work.
 - **Rhythm** is quantized to sixteenths in 4/4 with one constant tempo.
   Triplets, swing, tempo changes and odd meters come out wrong, and bar 1 is
   aligned to the first strong note rather than the real downbeat.
 - **Notes, not technique**: slides, hammer-ons, ghost notes and slap are not
   detected.
-- **Fingering** is greedy (looks one note back, not at the whole phrase).
+- **Fingering** favours low frets and open position, so a note the bassist
+  plays on the E string at the 12th fret may appear on the D string at the
+  2nd (same pitch, different sound). See [#1](https://github.com/joaquin-p-olivera/bassline-to-tab/issues/1).
+- **Note detection** was tuned on a single real recording (about 82% of notes
+  at the exact pitch); other songs and mixes may need retuning. Some notes
+  still come out an octave too high.
 - **Recordings far from A440** (±30 cents or more) can put notes on the
   neighbouring semitone; the app warns when it sees this.
 
 ## Roadmap
 
-1. Measure and tune separation speed on phones.
-2. Viterbi / dynamic-programming fingering over whole phrases.
-3. Note durations and rests in the tab; MusicXML / Guitar Pro export.
-4. Downbeat detection and smarter quantization (triplets, swing).
-5. Playback that highlights the current tab position.
+1. Faster separation ([#2](https://github.com/joaquin-p-olivera/bassline-to-tab/issues/2)).
+2. Fingering style option: open position vs lower strings ([#1](https://github.com/joaquin-p-olivera/bassline-to-tab/issues/1)), then manual editing.
+3. Validate and retune note detection on more recordings.
+4. Note durations and rests in the tab; MusicXML / Guitar Pro export.
+5. Downbeat detection and smarter quantization (triplets, swing).
 
 ## Development
 
