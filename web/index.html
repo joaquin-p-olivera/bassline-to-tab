@@ -46,13 +46,6 @@
             class="mt-2 w-full rounded-lg border border-stone-300 bg-white px-3 py-2 font-mono text-sm dark:border-stone-700 dark:bg-stone-950">
         </div>
         <div>
-          <label for="fingering" class="mb-2 block text-sm font-medium">Fingering</label>
-          <select id="fingering" class="w-full rounded-lg border border-stone-300 bg-white px-3 py-2 dark:border-stone-700 dark:bg-stone-950">
-            <option value="open-position">Open position (low frets, open strings)</option>
-            <option value="lower-strings">Lower strings (E/A, higher up the neck)</option>
-          </select>
-        </div>
-        <div>
           <label for="bpm" class="mb-2 block text-sm font-medium">Tempo (BPM)</label>
           <input id="bpm" type="number" min="30" max="300" step="any" placeholder="Estimate automatically"
             class="w-full rounded-lg border border-stone-300 bg-white px-3 py-2 dark:border-stone-700 dark:bg-stone-950">
@@ -62,7 +55,7 @@
           <input id="frets" type="number" min="12" max="36" value="24"
             class="w-full rounded-lg border border-stone-300 bg-white px-3 py-2 dark:border-stone-700 dark:bg-stone-950">
         </div>
-        <label class="flex items-start gap-3 self-end pb-2 sm:col-span-2">
+        <label class="flex items-start gap-3 self-end pb-2">
           <input id="separate" type="checkbox" checked class="mt-1 h-4 w-4 accent-amber-600">
           <span class="text-sm">
             Separate the bass with Demucs
@@ -129,7 +122,13 @@
 
       <div>
         <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
-          <h2 class="text-xl font-semibold">Tablature</h2>
+          <div class="flex flex-wrap items-center gap-3">
+            <h2 class="text-xl font-semibold">Tablature</h2>
+            <div id="fingering-toggle" class="inline-flex overflow-hidden rounded-lg border border-stone-300 text-sm dark:border-stone-700" role="group" aria-label="Fingering">
+              <button type="button" data-fingering="open-position" class="fingering-button px-3 py-1" title="Low frets and open strings">Open position</button>
+              <button type="button" data-fingering="lower-strings" class="fingering-button border-l border-stone-300 px-3 py-1 dark:border-stone-700" title="E and A strings, higher up the neck">Lower strings</button>
+            </div>
+          </div>
           <div class="flex flex-wrap gap-2 text-sm">
             <button id="copy" type="button" class="rounded-lg border border-stone-300 px-3 py-1.5 hover:bg-stone-100 dark:border-stone-700 dark:hover:bg-stone-800">Copy</button>
             <button id="download-tab" type="button" class="rounded-lg border border-stone-300 px-3 py-1.5 hover:bg-stone-100 dark:border-stone-700 dark:hover:bg-stone-800">Download .txt</button>

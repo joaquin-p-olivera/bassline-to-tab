@@ -22,8 +22,6 @@ const MODEL_FRAMES_PER_SECOND: f64 = 86.0;
 pub struct Options {
     pub tuning: Tuning,
     pub frets: u8,
-    /// Which strings to prefer when a pitch fits on several.
-    pub fingering: FingeringStyle,
     /// Tempo in BPM; estimated from the notes when `None`.
     pub bpm: Option<f64>,
     pub onset_threshold: f32,
@@ -37,7 +35,6 @@ impl Default for Options {
         Self {
             tuning: Tuning::from_spec("standard").expect("built-in preset"),
             frets: 24,
-            fingering: FingeringStyle::default(),
             bpm: None,
             onset_threshold: 0.5,
             frame_threshold: 0.3,
@@ -47,13 +44,25 @@ impl Default for Options {
     }
 }
 
-/// A detected note and where it is played.
+/// A detected note and the pitch written in the tab.
 #[derive(Clone, Debug)]
 pub struct TabNote {
     pub note: Note,
     /// Pitch actually written in the tab (shifted by octaves if out of range).
     pub played_pitch: u8,
-    pub position: Option<Position>,
+}
+
+/// The tab for one fingering style. All styles share the notes and rhythm;
+/// only strings and frets differ.
+#[derive(Clone, Debug)]
+pub struct Fingering {
+    pub style: FingeringStyle,
+    /// Position of each note in [`Transcription::notes`] (`None` if unplayable).
+    pub positions: Vec<Option<Position>>,
+    /// Notes placed on the sixteenth-note grid, for interactive rendering.
+    pub events: Vec<TabEvent>,
+    /// ASCII tablature.
+    pub tab: String,
 }
 
 /// Everything the transcription produced.
@@ -62,16 +71,21 @@ pub struct Transcription {
     pub notes: Vec<TabNote>,
     pub tempo: Tempo,
     pub tuning_estimate: Option<TuningEstimate>,
-    /// Notes placed on the sixteenth-note grid, for interactive rendering.
-    pub events: Vec<TabEvent>,
-    /// ASCII tablature.
-    pub tab: String,
+    /// One tab per [`FingeringStyle`], in the order of [`FingeringStyle::ALL`].
+    pub fingerings: Vec<Fingering>,
     /// Standard MIDI file with the detected notes.
     pub midi: Vec<u8>,
     /// Human-readable problems worth showing to the user.
     pub warnings: Vec<String>,
     pub raw_note_count: usize,
     pub refine_stats: RefineStats,
+}
+
+impl Transcription {
+    /// The tab for `style`.
+    pub fn fingering(&self, style: FingeringStyle) -> &Fingering {
+        self.fingerings.iter().find(|f| f.style == style).expect("every style is transcribed")
+    }
 }
 
 fn decode_params(options: &Options) -> DecodeParams {
@@ -106,8 +120,9 @@ fn tuning_warning(estimate: Option<TuningEstimate>) -> Option<String> {
     }
 }
 
-/// Maps notes onto the neck, shifting unplayable notes by octaves.
-fn assign_frets(line: &[Note], options: &Options) -> (Vec<u8>, Vec<Option<Position>>, Option<String>) {
+/// Shifts notes the instrument cannot play by octaves. Returns the pitches to
+/// write in the tab and a warning if any note was moved.
+fn fit_pitches(line: &[Note], options: &Options) -> (Vec<u8>, Option<String>) {
     let played: Vec<u8> = line
         .iter()
         .map(|note| fretboard::fit_to_range(note.pitch, &options.tuning, options.frets).unwrap_or(note.pitch))
@@ -120,8 +135,15 @@ fn assign_frets(line: &[Note], options: &Options) -> (Vec<u8>, Vec<Option<Positi
             options.tuning.describe()
         )
     });
-    let positions = fretboard::assign_positions(&played, &options.tuning, options.frets, options.fingering);
-    (played, positions, warning)
+    (played, warning)
+}
+
+/// Fingers `played` in `style` and renders the tab.
+fn finger(line: &[Note], played: &[u8], tempo: &Tempo, options: &Options, style: FingeringStyle) -> Fingering {
+    let positions = fretboard::assign_positions(played, &options.tuning, options.frets, style);
+    let events = tab::build_events(line, &positions, tempo);
+    let tab = tab::render(&events, &options.tuning, options.bars_per_line);
+    Fingering { style, positions, events, tab }
 }
 
 /// Transcribes mono audio sampled at [`crate::model::SAMPLE_RATE`].
@@ -167,28 +189,21 @@ pub fn transcribe(
     let tempo = analysis::estimate_tempo(&line, options.bpm);
     info!("Tempo: {:.1} BPM, grid starts at {:.2} s", tempo.bpm, tempo.origin);
 
-    let (played, positions, range_warning) = assign_frets(&line, options);
+    let (played, range_warning) = fit_pitches(&line, options);
     warnings.extend(range_warning);
     for warning in &warnings {
         warn!("{warning}");
     }
 
-    let events = tab::build_events(&line, &positions, &tempo);
-    let tab = tab::render(&events, &options.tuning, options.bars_per_line);
+    let fingerings = FingeringStyle::ALL.iter().map(|style| finger(&line, &played, &tempo, options, *style)).collect();
     let midi = midi::encode(&line, tempo.bpm)?;
 
-    let notes = line
-        .into_iter()
-        .zip(played)
-        .zip(positions)
-        .map(|((note, played_pitch), position)| TabNote { note, played_pitch, position })
-        .collect();
+    let notes = line.into_iter().zip(played).map(|(note, played_pitch)| TabNote { note, played_pitch }).collect();
     Ok(Transcription {
         notes,
         tempo,
         tuning_estimate,
-        events,
-        tab,
+        fingerings,
         midi,
         warnings,
         raw_note_count: raw.len(),

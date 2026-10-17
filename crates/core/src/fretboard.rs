@@ -39,6 +39,17 @@ pub enum FingeringStyle {
 }
 
 impl FingeringStyle {
+    /// Every style, in the order the page shows them.
+    pub const ALL: [Self; 2] = [Self::OpenPosition, Self::LowerStrings];
+
+    /// The name used by [`Self::from_spec`] and the web page.
+    pub fn as_spec(self) -> &'static str {
+        match self {
+            Self::OpenPosition => "open-position",
+            Self::LowerStrings => "lower-strings",
+        }
+    }
+
     /// Parses `"open-position"` or `"lower-strings"`.
     pub fn from_spec(spec: &str) -> anyhow::Result<Self> {
         match spec.trim().to_ascii_lowercase().as_str() {
@@ -264,5 +275,8 @@ mod tests {
         assert_eq!(FingeringStyle::from_spec("open-position").unwrap(), FingeringStyle::OpenPosition);
         assert_eq!(FingeringStyle::from_spec(" Lower-Strings ").unwrap(), FingeringStyle::LowerStrings);
         assert!(FingeringStyle::from_spec("sideways").is_err());
+        for style in FingeringStyle::ALL {
+            assert_eq!(FingeringStyle::from_spec(style.as_spec()).unwrap(), style);
+        }
     }
 }

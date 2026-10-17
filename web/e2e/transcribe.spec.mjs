@@ -49,6 +49,20 @@ test("transcribes an isolated bass riff into tab", async ({ page }) => {
   console.log(await page.locator("#timings").innerText());
 });
 
+test("switches between the two fingerings", async ({ page }) => {
+  const logs = collectLogs(page);
+  await transcribeRiff(page, logs);
+  const eString = async () =>
+    (await page.locator("#tab-view").innerText()).split("\n").find((line) => line.startsWith("E|"));
+  // Open position plays A1 B1 C2 on the open A string; lower strings keeps them on E.
+  const lowerStart = "E|0-------0---3---5-------7---8---";
+  expect(await eString()).not.toContain(lowerStart);
+  await page.locator('[data-fingering="lower-strings"]').click();
+  expect((await eString()).startsWith(lowerStart)).toBe(true);
+  await page.locator('[data-fingering="open-position"]').click();
+  expect(await eString()).not.toContain(lowerStart);
+});
+
 test("tab fits the width at phone and desktop sizes", async ({ page }) => {
   const logs = collectLogs(page);
   await transcribeRiff(page, logs);

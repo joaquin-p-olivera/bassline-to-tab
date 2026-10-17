@@ -72,10 +72,11 @@ Without WebGPU the app still transcribes an **isolated** bass recording
   aligned to the first strong note rather than the real downbeat.
 - **Notes, not technique**: slides, hammer-ons, ghost notes and slap are not
   detected.
-- **Fingering** is a guess: the string is not detected from the sound. The
-  *Fingering* option picks between open position (low frets, open strings)
-  and lower strings (E/A higher up the neck); a line that mixes both may
-  still land on the wrong string.
+- **Fingering** is a guess: the string is not detected from the sound. Every
+  transcription comes in two fingerings, open position (low frets, open
+  strings) and lower strings (E/A higher up the neck), and a toggle above the
+  tab switches between them. A line that mixes both may still land on the
+  wrong string.
 - **Note detection** was tuned on a single real recording (about 82% of notes
   at the exact pitch); other songs and mixes may need retuning. Some notes
   still come out an octave too high.

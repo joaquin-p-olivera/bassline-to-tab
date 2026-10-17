@@ -2,6 +2,7 @@
 //! make sure the transcription recovers the notes and the tempo.
 
 use bassline_core::analysis::estimate_tempo;
+use bassline_core::fretboard::FingeringStyle;
 use bassline_core::model::{BasicPitch, SAMPLE_RATE};
 use bassline_core::notes::{decode_notes, to_monophonic, DecodeParams};
 use bassline_core::onsets::refine_onsets;
@@ -72,11 +73,19 @@ fn pipeline_produces_a_playable_tab() {
 
     assert_eq!(last_progress.0, last_progress.1, "progress should reach the total");
     assert_eq!(result.notes.len(), 2 * RIFF.len());
-    assert!(result.notes.iter().all(|n| n.position.is_some()));
+    for fingering in &result.fingerings {
+        assert_eq!(fingering.positions.len(), result.notes.len());
+        assert!(fingering.positions.iter().all(Option::is_some), "{:?} left notes unplayed", fingering.style);
+    }
     assert!((result.tempo.bpm - BPM).abs() < 1.0);
     assert!(result.warnings.is_empty(), "unexpected warnings: {:?}", result.warnings);
     // First bar of the riff: E0 E0 E3 on the E string, then A0 A2 A3.
-    let e_string = result.tab.lines().find(|l| l.starts_with("E|")).unwrap();
+    let open = &result.fingering(FingeringStyle::OpenPosition).tab;
+    let e_string = open.lines().find(|l| l.starts_with("E|")).unwrap();
     assert!(e_string.starts_with("E|0-------0---3---"), "got {e_string}");
+    // Lower strings: A1 B1 C2 move from the open A string onto the E string.
+    let lower = &result.fingering(FingeringStyle::LowerStrings).tab;
+    let e_string = lower.lines().find(|l| l.starts_with("E|")).unwrap();
+    assert!(e_string.starts_with("E|0-------0---3---5-------7---8---"), "got {e_string}");
     assert!(result.midi.starts_with(b"MThd"));
 }
