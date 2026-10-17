@@ -1,0 +1,62 @@
+name: Deploy to GitHub Pages
+
+# Manual only: run it by hand (Actions -> Deploy to GitHub Pages -> Run
+# workflow) to publish a branch at its current commit, usually main. It builds
+# and tests that commit (web.yml) and, if the checks pass, deploys it. Pushes
+# and merges never deploy on their own. Any branch can be deployed, which lets
+# a branch be tried in production before merging; the site stays on that
+# branch until the next deploy.
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: 'Branch to deploy'
+        required: true
+        default: 'main'
+      confirm_non_main:
+        description: 'Type "yes" to confirm (only required when branch is not main)'
+        required: false
+        default: ''
+
+# Deploys queue up instead of cancelling each other, so the last run wins
+# without leaving Pages mid-deploy.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  # Deploying main needs no extra step (the common case); deploying anything
+  # else needs a deliberate "yes", so a typo in the branch field fails closed
+  # instead of deploying the wrong thing.
+  guard:
+    name: Guard against accidental non-main deploys
+    runs-on: ubuntu-latest
+    steps:
+      - if: inputs.branch != 'main' && inputs.confirm_non_main != 'yes'
+        run: |
+          echo "::error::Deploying a branch other than main requires confirm_non_main set to 'yes'."
+          exit 1
+
+  checks:
+    needs: guard
+    uses: ./.github/workflows/web.yml
+    with:
+      ref: ${{ inputs.branch }}
+      pages: true
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: checks
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

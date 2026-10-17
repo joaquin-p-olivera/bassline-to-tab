@@ -45,7 +45,8 @@ Features:
 | `crates/web` | Rust → wasm | `wasm-bindgen` bindings: `separate_bass` (HTDemucs via [demucs-rs](https://github.com/nikhilunni/demucs-rs) on WebGPU) and `transcribe`. |
 | `web/` | HTML/JS | The page (`index.html`, `app.js`), the worker (`worker.js`), the interactive tab (`tab-view.js`) and the song history (`storage.js`). |
 | `scripts/build-web.sh` | Bash | Builds the wasm module and assembles the site. |
-| `.github/workflows/pages.yml` | CI | Builds the wasm, runs an end-to-end test in headless Chromium, deploys to GitHub Pages. |
+| `.github/workflows/web.yml` | CI | On every push: builds the wasm (with clippy) and runs the end-to-end tests in headless Chromium. |
+| `.github/workflows/deploy.yml` | CI | Manual only (Actions → Deploy to GitHub Pages → Run workflow): builds and tests a branch, then deploys it to GitHub Pages. Branches other than `main` need `confirm_non_main: yes`. |
 
 The first separation downloads the HTDemucs weights (~84 MB) from Hugging
 Face; the browser caches them for next time.
