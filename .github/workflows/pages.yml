@@ -32,25 +32,17 @@ jobs:
         with:
           tool: wasm-bindgen-cli@${{ env.WASM_BINDGEN_VERSION }}
 
-      - name: Build the WebAssembly module
+      - name: Build the WebAssembly modules and assemble the site
         run: |
           set -o pipefail
-          if ! cargo build -p bassline-web --release --target wasm32-unknown-unknown 2>&1 | tee build.log; then
+          if ! scripts/build-web.sh _site 2>&1 | tee build.log; then
             # Surface compiler errors as annotations, readable through the API.
-            grep -E '^error' -A14 build.log | head -120 | split -l 30 - chunk_
+            grep -E '^error' -A14 build.log | head -120 | split -l 30 - chunk_ || true
             for chunk in chunk_*; do
               echo "::error title=wasm build::$(sed ':a;N;$!ba;s/%/%25/g;s/\r/%0D/g;s/\n/%0A/g' "$chunk")"
             done
             exit 1
           fi
-
-      - name: Assemble the site
-        run: |
-          mkdir -p _site
-          cp web/index.html web/app.js web/worker.js _site/
-          wasm-bindgen --target web --out-dir _site/pkg \
-            target/wasm32-unknown-unknown/release/bassline_web.wasm
-          ls -la _site _site/pkg
 
       - uses: actions/setup-node@v4
         with:

@@ -11,12 +11,17 @@ publish = false
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+[features]
+# Benchmarks GPU kernel variants on first use and keeps the fastest. Much
+# faster separation on desktop GPUs, but on Apple mobile GPUs the benchmarking
+# burst hangs the device (see demucs-rs commit 76a5ac0), so CI builds two
+# variants: `pkg` (with autotune) and `pkg-mobile` (without).
+autotune = ["burn/autotune", "demucs-core/autotune"]
+
 [dependencies]
 anyhow = "1"
 bassline-core = { path = "../core" }
-# Autotune stays off: on Apple mobile GPUs it benchmarks every kernel shape on
-# first inference and hangs the device (see demucs-rs commit 76a5ac0).
-burn = { version = "0.20.1", default-features = false, features = ["std", "wgpu", "fusion"] }
+burn ={ version = "0.20.1", default-features = false, features = ["std", "wgpu", "fusion"] }
 console_error_panic_hook = "0.1"
 console_log = "1"
 demucs-core = { git = "https://github.com/nikhilunni/demucs-rs", rev = "5d9f61a2e15987c5ea9a9fe92300b64d994bcd12", features = ["wgpu", "fusion"] }

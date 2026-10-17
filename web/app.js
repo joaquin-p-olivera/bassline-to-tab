@@ -1,19 +1,36 @@
-// Main thread: UI, audio decoding (Web Audio API) and talking to the worker.
-// The heavy lifting (Demucs, Basic Pitch) runs in worker.js.
+// Main thread: UI, audio decoding (Web Audio API), song history and talking
+// to the worker. The heavy lifting (Demucs, Basic Pitch) runs in worker.js.
+
+import { deleteSong, getSong, listSongs, saveSong, songId, storageUsage } from "./storage.js";
+import { TabView } from "./tab-view.js";
 
 const SEPARATION_SAMPLE_RATE = 44100;
-/// Approximate width of one 4/4 bar of tab, in characters.
-const BAR_WIDTH_CHARS = 34;
+/// Bars per line in the downloadable .txt tab.
+const TEXT_TAB_BARS_PER_LINE = 4;
 
 const $ = (id) => document.getElementById(id);
 
 const form = $("form");
 const fileInput = $("audio");
 const submitButton = $("submit");
+const player = $("player");
+const tabView = new TabView($("tab-view"));
 
-// ─── Worker requests ────────────────────────────────────────────────────────
+/// The song being worked on: a history record (see storage.js).
+let currentSong = null;
+let currentResult = null;
+let playerUrls = { bass: null, mix: null };
 
-const worker = new Worker(new URL("./worker.js", import.meta.url), { type: "module" });
+// ─── Device & worker ────────────────────────────────────────────────────────
+
+function isMobileDevice() {
+  const ua = navigator.userAgent;
+  // iPadOS reports itself as a Mac; touch support gives it away.
+  return /Android|iPhone|iPad|iPod/i.test(ua) || (ua.includes("Macintosh") && navigator.maxTouchPoints > 1);
+}
+
+const workerUrl = new URL(`./worker.js${isMobileDevice() ? "?variant=mobile" : ""}`, import.meta.url);
+const worker = new Worker(workerUrl, { type: "module" });
 const pending = new Map();
 let nextRequestId = 1;
 
@@ -44,9 +61,14 @@ function callWorker(type, payload = {}, transfer = [], onProgress = null) {
 
 // ─── UI helpers ─────────────────────────────────────────────────────────────
 
+/// Uses both Tailwind's class and the native attribute, so visibility works
+/// even if the Tailwind CDN fails to load.
 function show(element, visible) {
   element.classList.toggle("hidden", !visible);
+  element.hidden = !visible;
 }
+
+for (const element of document.querySelectorAll(".hidden")) element.hidden = true;
 
 function setStatus(text, { busy = true, detail = "", error = "" } = {}) {
   show($("status"), true);
@@ -67,6 +89,11 @@ function formatSeconds(seconds) {
   return seconds < 60 ? `${seconds.toFixed(1)} s` : `${Math.floor(seconds / 60)} min ${Math.round(seconds % 60)} s`;
 }
 
+function formatDuration(seconds) {
+  const whole = Math.round(seconds);
+  return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, "0")}`;
+}
+
 function describeProgress({ stage, done, total }) {
   switch (stage) {
     case "download":
@@ -85,13 +112,6 @@ function tuningValue() {
   return selected === "custom" ? $("tuning-custom").value.trim() : selected;
 }
 
-function barsPerLine() {
-  const tab = $("tab");
-  const width = tab.clientWidth || document.body.clientWidth;
-  const charWidth = parseFloat(getComputedStyle(tab).fontSize) * 0.6;
-  return Math.max(1, Math.floor((width / charWidth - 4) / BAR_WIDTH_CHARS));
-}
-
 function readOptions() {
   const bpm = parseFloat($("bpm").value);
   return {
@@ -100,7 +120,7 @@ function readOptions() {
     bpm: Number.isFinite(bpm) ? bpm : null,
     onsetThreshold: parseFloat($("onset-threshold").value),
     minNoteMs: parseFloat($("min-note").value) || 80,
-    barsPerLine: barsPerLine(),
+    barsPerLine: TEXT_TAB_BARS_PER_LINE,
   };
 }
 
@@ -113,10 +133,14 @@ function download(filename, blob) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
+function baseName(name) {
+  return name.replace(/\.[^.]+$/, "") || "bassline";
+}
+
 // ─── Audio ──────────────────────────────────────────────────────────────────
 
-async function decodeFile(file, sampleRate) {
-  const bytes = await file.arrayBuffer();
+async function decodeBlob(blob, sampleRate) {
+  const bytes = await blob.arrayBuffer();
   const context = new OfflineAudioContext(2, 1, sampleRate);
   const buffer = await context.decodeAudioData(bytes);
   const left = buffer.getChannelData(0);
@@ -139,26 +163,27 @@ async function toMono(left, right, fromRate, toRate) {
   return rendered.getChannelData(0);
 }
 
-function wavBlob(left, right, sampleRate) {
+/// 16-bit mono WAV; the bass stem is stored this way to keep the history small.
+function monoWavBlob(left, right, sampleRate) {
   const frames = left.length;
-  const view = new DataView(new ArrayBuffer(44 + frames * 4));
+  const view = new DataView(new ArrayBuffer(44 + frames * 2));
   const writeString = (offset, text) => [...text].forEach((c, i) => view.setUint8(offset + i, c.charCodeAt(0)));
   writeString(0, "RIFF");
-  view.setUint32(4, 36 + frames * 4, true);
+  view.setUint32(4, 36 + frames * 2, true);
   writeString(8, "WAVE");
   writeString(12, "fmt ");
   view.setUint32(16, 16, true);
   view.setUint16(20, 1, true);
-  view.setUint16(22, 2, true);
+  view.setUint16(22, 1, true);
   view.setUint32(24, sampleRate, true);
-  view.setUint32(28, sampleRate * 4, true);
-  view.setUint16(32, 4, true);
+  view.setUint32(28, sampleRate * 2, true);
+  view.setUint16(32, 2, true);
   view.setUint16(34, 16, true);
   writeString(36, "data");
-  view.setUint32(40, frames * 4, true);
+  view.setUint32(40, frames * 2, true);
   for (let i = 0; i < frames; i++) {
-    view.setInt16(44 + i * 4, Math.max(-1, Math.min(1, left[i])) * 0x7fff, true);
-    view.setInt16(46 + i * 4, Math.max(-1, Math.min(1, right[i])) * 0x7fff, true);
+    const sample = Math.max(-1, Math.min(1, (left[i] + right[i]) / 2));
+    view.setInt16(44 + i * 2, sample * 0x7fff, true);
   }
   return new Blob([view], { type: "audio/wav" });
 }
@@ -171,10 +196,59 @@ async function hasWebGpu() {
   }
 }
 
-// ─── Results ────────────────────────────────────────────────────────────────
+// ─── Player & tab ───────────────────────────────────────────────────────────
 
-let lastResult = null;
-let lastFileName = "bassline";
+function setPlayerSources(song) {
+  for (const url of Object.values(playerUrls)) if (url) URL.revokeObjectURL(url);
+  playerUrls = {
+    bass: song.bassWav ? URL.createObjectURL(song.bassWav) : null,
+    mix: URL.createObjectURL(song.file),
+  };
+  for (const button of document.querySelectorAll(".source-button")) {
+    button.disabled = !playerUrls[button.dataset.source];
+    button.classList.toggle("opacity-40", button.disabled);
+  }
+  selectSource(playerUrls.bass ? "bass" : "mix");
+}
+
+function selectSource(source) {
+  const url = playerUrls[source];
+  if (!url) return;
+  const resumeAt = player.currentTime;
+  const wasPlaying = !player.paused;
+  if (player.src !== url) {
+    player.src = url;
+    player.addEventListener(
+      "loadedmetadata",
+      () => {
+        player.currentTime = resumeAt;
+        if (wasPlaying) player.play();
+      },
+      { once: true },
+    );
+  }
+  for (const button of document.querySelectorAll(".source-button")) {
+    const active = button.dataset.source === source;
+    button.classList.toggle("bg-amber-600", active);
+    button.classList.toggle("text-white", active);
+  }
+}
+
+function followPlayback() {
+  tabView.setTime(player.currentTime);
+  if (!player.paused) requestAnimationFrame(followPlayback);
+}
+
+tabView.onSeek = (seconds) => {
+  player.currentTime = seconds;
+  tabView.setTime(seconds);
+};
+
+player.addEventListener("play", () => requestAnimationFrame(followPlayback));
+player.addEventListener("seeked", () => tabView.setTime(player.currentTime));
+document.querySelectorAll(".source-button").forEach((button) =>
+  button.addEventListener("click", () => selectSource(button.dataset.source)),
+);
 
 function renderSummary(result) {
   const tuning =
@@ -188,16 +262,16 @@ function renderSummary(result) {
     ["Recording tuning", tuning],
   ];
   $("summary").replaceChildren(
-    ...items.flatMap(([label, value]) => {
+    ...items.map(([label, value]) => {
+      const wrapper = document.createElement("div");
       const term = document.createElement("dt");
       term.className = "text-stone-500";
       term.textContent = label;
       const definition = document.createElement("dd");
       definition.className = "font-medium";
       definition.textContent = value;
-      const wrapper = document.createElement("div");
       wrapper.append(term, definition);
-      return [wrapper];
+      return wrapper;
     }),
   );
   const warnings = $("warnings");
@@ -211,74 +285,170 @@ function renderSummary(result) {
   show(warnings, result.warnings.length > 0);
 }
 
-function showResult(result, bassStem, timings) {
-  lastResult = result;
+function showResult(song, result, timings = []) {
+  currentResult = result;
   renderSummary(result);
-  $("tab").textContent = result.tab;
-  const player = $("bass-player");
-  if (bassStem) {
-    if (player.src) URL.revokeObjectURL(player.src);
-    player.src = URL.createObjectURL(wavBlob(bassStem.left, bassStem.right, bassStem.sampleRate));
-  }
-  show($("bass-player-box"), Boolean(bassStem));
-  $("timings").textContent = timings.map(([label, seconds]) => `${label}: ${formatSeconds(seconds)}`).join(" · ");
   show($("result"), true);
+  setPlayerSources(song);
+  tabView.setTranscription(result);
+  tabView.setTime(player.currentTime || 0);
+  $("timings").textContent = timings.map(([label, value]) => `${label}: ${value}`).join(" · ");
+}
+
+// ─── History ────────────────────────────────────────────────────────────────
+
+function selectSong(song) {
+  currentSong = song;
+  fileInput.value = "";
+  $("file-label").textContent = `${song.name} (from your songs)`;
+  // With a saved bass stem, "separate" reuses it instantly.
+  $("separate").checked = Boolean(song.bassWav) || song.separated;
+}
+
+async function openSong(id) {
+  const song = await getSong(id);
+  if (!song) return;
+  selectSong(song);
+  show($("status"), false);
+  if (song.lastResult) {
+    showResult(song, song.lastResult, [["Opened from your songs", "no processing"]]);
+  } else {
+    show($("result"), false);
+  }
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+function historyItem(song) {
+  const item = document.createElement("li");
+  item.className = "flex flex-wrap items-center justify-between gap-2 px-4 py-3";
+  const info = document.createElement("div");
+  info.className = "min-w-0";
+  const name = document.createElement("p");
+  name.className = "truncate font-medium";
+  name.textContent = song.name;
+  const meta = document.createElement("p");
+  meta.className = "text-xs text-stone-500";
+  meta.textContent = [
+    new Date(song.createdAt).toLocaleDateString(),
+    song.duration ? formatDuration(song.duration) : null,
+    song.bassWav ? "bass separated" : "not separated",
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  info.append(name, meta);
+
+  const actions = document.createElement("div");
+  actions.className = "flex gap-2 text-sm";
+  const open = document.createElement("button");
+  open.type = "button";
+  open.className = "rounded-lg border border-stone-300 px-3 py-1 hover:bg-stone-100 dark:border-stone-700 dark:hover:bg-stone-800";
+  open.textContent = "Open";
+  open.addEventListener("click", () => openSong(song.id));
+  const remove = document.createElement("button");
+  remove.type = "button";
+  remove.className = "rounded-lg px-3 py-1 text-red-700 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950";
+  remove.textContent = "Delete";
+  remove.addEventListener("click", async () => {
+    if (!confirm(`Delete "${song.name}" from your songs?`)) return;
+    await deleteSong(song.id);
+    if (currentSong?.id === song.id) currentSong = null;
+    refreshHistory();
+  });
+  actions.append(open, remove);
+  item.append(info, actions);
+  return item;
+}
+
+async function refreshHistory() {
+  const songs = await listSongs();
+  $("history-list").replaceChildren(...songs.map(historyItem));
+  show($("history"), songs.length > 0);
+  const usage = await storageUsage();
+  $("storage-usage").textContent = usage === null ? "" : `${(usage / 1e6).toFixed(0)} MB used in this browser`;
 }
 
 // ─── Main flow ──────────────────────────────────────────────────────────────
 
-async function run(file) {
+/// Returns the audio to transcribe (stereo at its own rate) and updates the song record.
+async function prepareSource(song, separate, timings, onProgress) {
+  if (separate && song.bassWav) {
+    setStatus("Loading the saved bass…");
+    const bass = await decodeBlob(song.bassWav, SEPARATION_SAMPLE_RATE);
+    timings.push(["Separation", "reused"]);
+    return bass;
+  }
+
+  setStatus("Decoding audio…");
+  setProgress(null);
+  const started = performance.now();
+  const mix = await decodeBlob(song.file, SEPARATION_SAMPLE_RATE);
+  song.duration = mix.duration;
+  timings.push(["Decode", formatSeconds((performance.now() - started) / 1000)]);
+  if (!separate) return mix;
+
+  setStatus("Separating the bass with Demucs…", { detail: "Preparing the GPU…" });
+  const separated = await callWorker(
+    "separate",
+    { left: mix.left, right: mix.right, sampleRate: mix.sampleRate },
+    [mix.left.buffer, mix.right.buffer],
+    onProgress,
+  );
+  timings.push(["Separation", formatSeconds(separated.seconds)]);
+  song.bassWav = monoWavBlob(separated.left, separated.right, separated.sampleRate);
+  song.separated = true;
+  await saveSong(song);
+  return { left: separated.left, right: separated.right, sampleRate: separated.sampleRate };
+}
+
+async function run(song) {
   const options = readOptions();
   const separate = $("separate").checked;
   const timings = [];
+  const started = performance.now();
   const onProgress = (event) => {
     setProgress(event.total ? event.done / event.total : null);
     $("progress").textContent = describeProgress(event);
   };
 
-  setStatus("Decoding audio…");
-  setProgress(null);
-  const started = performance.now();
-  const mix = await decodeFile(file, SEPARATION_SAMPLE_RATE);
-  timings.push(["Decode", (performance.now() - started) / 1000]);
-  console.info(`Decoded ${file.name}: ${mix.duration.toFixed(1)} s`);
-
-  let bassStem = null;
-  let source = mix;
-  if (separate) {
-    setStatus("Separating the bass with Demucs…", { detail: "Preparing the GPU…" });
-    const separated = await callWorker(
-      "separate",
-      { left: mix.left, right: mix.right, sampleRate: mix.sampleRate },
-      [mix.left.buffer, mix.right.buffer],
-      onProgress,
-    );
-    timings.push(["Separation", separated.seconds]);
-    bassStem = { left: separated.left, right: separated.right, sampleRate: separated.sampleRate };
-    source = bassStem;
-  }
+  const source = await prepareSource(song, separate, timings, onProgress);
 
   setStatus("Detecting notes…");
   setProgress(0);
   const { transcriptionSampleRate } = await callWorker("info");
   const mono = await toMono(source.left, source.right, source.sampleRate, transcriptionSampleRate);
   const transcribed = await callWorker("transcribe", { samples: mono, options }, [], onProgress);
-  timings.push(["Transcription", transcribed.seconds]);
-  timings.push(["Total", (performance.now() - started) / 1000]);
+  timings.push(["Transcription", formatSeconds(transcribed.seconds)]);
+  timings.push(["Total", formatSeconds((performance.now() - started) / 1000)]);
+
+  song.lastOptions = options;
+  song.lastResult = transcribed.result;
+  song.separated = separate;
+  await saveSong(song);
+  refreshHistory();
 
   show($("status"), false);
-  showResult(transcribed.result, bassStem, timings);
+  showResult(song, transcribed.result, timings);
+}
+
+async function songForSubmission() {
+  const file = fileInput.files[0];
+  if (!file) return currentSong;
+  const id = songId(file);
+  const saved = await getSong(id);
+  return saved ?? { id, name: file.name, file, createdAt: Date.now(), bassWav: null, separated: false };
 }
 
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
-  const file = fileInput.files[0];
-  if (!file) return;
-  lastFileName = file.name.replace(/\.[^.]+$/, "") || "bassline";
+  const song = await songForSubmission();
+  if (!song) {
+    setStatus("Choose a file first", { busy: false, error: "No audio file selected." });
+    return;
+  }
+  currentSong = song;
   submitButton.disabled = true;
-  show($("result"), false);
   try {
-    await run(file);
+    await run(song);
   } catch (error) {
     console.error(error);
     setProgress(null);
@@ -290,8 +460,11 @@ form.addEventListener("submit", async (event) => {
 
 // ─── Static UI wiring ───────────────────────────────────────────────────────
 
+fileInput.required = false;
 fileInput.addEventListener("change", () => {
-  $("file-label").textContent = fileInput.files[0]?.name ?? "Tap to choose a file, or drop it here";
+  const file = fileInput.files[0];
+  if (file) currentSong = null;
+  $("file-label").textContent = file?.name ?? "Tap to choose a file, or drop it here";
 });
 
 const drop = $("drop");
@@ -320,18 +493,22 @@ $("onset-threshold").addEventListener("input", () => {
 });
 
 $("copy").addEventListener("click", async () => {
-  if (!lastResult) return;
-  await navigator.clipboard.writeText(lastResult.tab);
+  if (!currentResult) return;
+  await navigator.clipboard.writeText(currentResult.tab);
   $("copy").textContent = "Copied";
   setTimeout(() => ($("copy").textContent = "Copy"), 1500);
 });
 
 $("download-tab").addEventListener("click", () => {
-  if (lastResult) download(`${lastFileName}.tab.txt`, new Blob([lastResult.tab], { type: "text/plain" }));
+  if (currentResult) {
+    download(`${baseName(currentSong?.name ?? "bassline")}.tab.txt`, new Blob([currentResult.tab], { type: "text/plain" }));
+  }
 });
 
 $("download-midi").addEventListener("click", () => {
-  if (lastResult) download(`${lastFileName}.mid`, new Blob([lastResult.midi], { type: "audio/midi" }));
+  if (currentResult) {
+    download(`${baseName(currentSong?.name ?? "bassline")}.mid`, new Blob([currentResult.midi], { type: "audio/midi" }));
+  }
 });
 
 callWorker("info")
@@ -346,3 +523,5 @@ hasWebGpu().then((available) => {
     "This browser has no WebGPU, so the bass cannot be separated here. You can still transcribe an isolated bass recording.";
   show(warning, true);
 });
+
+refreshHistory();

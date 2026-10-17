@@ -7,34 +7,98 @@ import { expect, test } from "@playwright/test";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const riffPath = path.join(here, "riff.wav");
+const BPM = 100;
+const LEAD_IN_S = 0.5;
+const SIXTEENTH_S = 60 / BPM / 4;
 
 test.beforeAll(() => {
   execFileSync("python3", [path.join(here, "make_riff.py"), riffPath], { stdio: "inherit" });
 });
 
-test("transcribes an isolated bass riff into tab", async ({ page }) => {
+function collectLogs(page) {
   const logs = [];
   page.on("console", (message) => logs.push(`[${message.type()}] ${message.text()}`));
   page.on("pageerror", (error) => logs.push(`[pageerror] ${error.message}`));
+  return logs;
+}
 
+async function transcribeRiff(page, logs) {
   await page.goto("./");
   await page.locator("#separate").uncheck();
   await page.locator("#audio").setInputFiles(riffPath);
   await page.locator("#submit").click();
-
   try {
     await expect(page.locator("#result")).toBeVisible({ timeout: 150_000 });
   } finally {
     console.log(logs.join("\n"));
   }
-
   await expect(page.locator("#error")).toBeHidden();
+}
+
+test("transcribes an isolated bass riff into tab", async ({ page }) => {
+  const logs = collectLogs(page);
+  await transcribeRiff(page, logs);
+
   const summary = await page.locator("#summary").innerText();
   expect(summary).toContain("48");
   expect(summary).toMatch(/100\.\d BPM/);
 
-  const tab = await page.locator("#tab").innerText();
+  const tab = await page.locator("#tab-view").innerText();
   const eString = tab.split("\n").find((line) => line.startsWith("E|"));
   expect(eString.startsWith("E|0-------0---3---")).toBe(true);
   console.log(await page.locator("#timings").innerText());
+});
+
+test("tab fits the width at phone and desktop sizes", async ({ page }) => {
+  const logs = collectLogs(page);
+  await transcribeRiff(page, logs);
+  for (const width of [390, 768, 1280]) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.waitForTimeout(300);
+    const overflow = await page.locator("#tab-view").evaluate((el) => el.scrollWidth - el.clientWidth);
+    expect(overflow, `horizontal overflow at ${width}px`).toBeLessThanOrEqual(1);
+  }
+});
+
+test("clicking a bar seeks the audio and shows the cursor", async ({ page }) => {
+  const logs = collectLogs(page);
+  await transcribeRiff(page, logs);
+  await page.waitForFunction(() => document.getElementById("player").readyState >= 1);
+
+  // Click the middle of the first sixteenth of bar 2 on the first tab line.
+  await page.locator(".tab-line").first().evaluate((line) => {
+    const probe = document.createElement("span");
+    probe.textContent = "0".repeat(100);
+    probe.style.cssText = "position:absolute;visibility:hidden;white-space:pre";
+    line.append(probe);
+    const charWidth = probe.getBoundingClientRect().width / 100;
+    probe.remove();
+    const firstRow = line.querySelector("pre").textContent.split("\n")[1];
+    const barTwoColumn = firstRow.indexOf("|", 2) + 1;
+    const rect = line.getBoundingClientRect();
+    line.dispatchEvent(
+      new MouseEvent("click", {
+        bubbles: true,
+        clientX: rect.left + (barTwoColumn + 0.5) * charWidth,
+        clientY: rect.top + rect.height / 2,
+      }),
+    );
+  });
+
+  const time = await page.evaluate(() => document.getElementById("player").currentTime);
+  expect(Math.abs(time - (LEAD_IN_S + 16 * SIXTEENTH_S))).toBeLessThan(0.05);
+  await expect(page.locator(".tab-cursor:not([hidden])")).toHaveCount(1);
+});
+
+test("songs are kept in the history after a reload", async ({ page }) => {
+  const logs = collectLogs(page);
+  await transcribeRiff(page, logs);
+  await page.reload();
+  await expect(page.locator("#history")).toBeVisible();
+  await expect(page.locator("#history-list")).toContainText("riff.wav");
+  await page.locator("#history-list button", { hasText: "Open" }).first().click();
+  await expect(page.locator("#result")).toBeVisible();
+  await expect(page.locator("#timings")).toContainText("Opened from your songs");
+  const tab = await page.locator("#tab-view").innerText();
+  expect(tab).toContain("E|0-------0---3---");
 });

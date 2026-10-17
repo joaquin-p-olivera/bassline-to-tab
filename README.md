@@ -24,11 +24,20 @@ song file ─► decode (Web Audio API)
 
 Everything heavy runs in a Web Worker so the page stays responsive.
 
+Features:
+- **Play along**: the tab follows the audio (bass only or full mix) with a
+  cursor on the current sixteenth; tap a bar to jump there.
+- **Your songs**: each song, its separated bass and its last tab are saved in
+  the browser (IndexedDB). Reopening a song or changing the settings reuses
+  the separated bass, so transcribing again takes seconds instead of minutes.
+- The tab wraps to the screen width (no horizontal scrolling).
+
 | Part | Where | What |
 | --- | --- | --- |
 | `crates/core` | Rust | Platform-agnostic transcription: Basic Pitch inference (ONNX via [tract](https://github.com/sonos/tract), model embedded), note decoding, onset refinement, tuning and tempo estimation, fret assignment, ASCII tab, MIDI. |
 | `crates/web` | Rust → wasm | `wasm-bindgen` bindings: `separate_bass` (HTDemucs via [demucs-rs](https://github.com/nikhilunni/demucs-rs) on WebGPU) and `transcribe`. |
-| `web/` | HTML/JS | The page (`index.html`, `app.js`) and the worker (`worker.js`). |
+| `web/` | HTML/JS | The page (`index.html`, `app.js`), the worker (`worker.js`), the interactive tab (`tab-view.js`) and the song history (`storage.js`). |
+| `scripts/build-web.sh` | Bash | Builds both wasm variants and assembles the site. |
 | `.github/workflows/pages.yml` | CI | Builds the wasm, runs an end-to-end test in headless Chromium, deploys to GitHub Pages. |
 
 The first separation downloads the HTDemucs weights (~84 MB) from Hugging
@@ -83,11 +92,13 @@ Build and serve the web app locally (Rust 1.91+):
 ```bash
 rustup target add wasm32-unknown-unknown
 cargo install wasm-bindgen-cli --version 0.2.129   # must match Cargo.lock
-cargo build -p bassline-web --release --target wasm32-unknown-unknown
-mkdir -p _site && cp web/index.html web/app.js web/worker.js _site/
-wasm-bindgen --target web --out-dir _site/pkg target/wasm32-unknown-unknown/release/bassline_web.wasm
+scripts/build-web.sh                               # builds into _site/
 python3 -m http.server 8000 --directory _site      # open http://localhost:8000
 ```
+
+Two builds of the module are produced: `pkg/` with GPU kernel autotuning
+(desktop; much faster separation) and `pkg-mobile/` without it (autotuning
+hangs Apple mobile GPUs). The page picks one based on the device.
 
 End-to-end test (after assembling `_site`):
 

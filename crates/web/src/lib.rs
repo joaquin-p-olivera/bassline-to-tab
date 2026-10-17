@@ -14,6 +14,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use bassline_core::model::{BasicPitch, SAMPLE_RATE};
 use bassline_core::pipeline::{self, Options, Transcription};
+use bassline_core::tab;
 use bassline_core::tuning::{pitch_name, Tuning};
 use burn::backend::wgpu::graphics::WebGpu;
 use burn::backend::wgpu::{init_setup_async, RuntimeOptions, Wgpu, WgpuDevice};
@@ -113,10 +114,25 @@ struct JsNote {
     amplitude: f32,
 }
 
+/// One fretted note on the sixteenth-note grid.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct JsTabEvent {
+    step: usize,
+    /// 0 is the lowest-pitched string.
+    string: usize,
+    fret: u8,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct JsTranscription {
     tab: String,
+    events: Vec<JsTabEvent>,
+    /// Open-string labels, lowest string first.
+    string_labels: Vec<String>,
+    steps_per_bar: usize,
+    steps_per_beat: usize,
     bpm: f64,
     grid_origin: f64,
     tuning: String,
@@ -146,8 +162,17 @@ fn to_js_transcription(result: Transcription, tuning: &Tuning) -> JsTranscriptio
             amplitude: n.note.amplitude,
         })
         .collect();
+    let events = result
+        .events
+        .iter()
+        .map(|e| JsTabEvent { step: e.step, string: e.position.string, fret: e.position.fret })
+        .collect();
     JsTranscription {
         tab: result.tab,
+        events,
+        string_labels: (0..tuning.strings().len()).map(|s| tuning.label(s)).collect(),
+        steps_per_bar: tab::STEPS_PER_BAR,
+        steps_per_beat: tab::STEPS_PER_BEAT,
         bpm: result.tempo.bpm,
         grid_origin: result.tempo.origin,
         tuning: tuning.describe(),

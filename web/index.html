@@ -108,9 +108,16 @@
       <dl id="summary" class="grid grid-cols-2 gap-x-4 gap-y-2 rounded-xl border border-stone-200 bg-white p-4 text-sm sm:grid-cols-4 dark:border-stone-800 dark:bg-stone-900"></dl>
       <ul id="warnings" class="hidden list-disc space-y-1 rounded-lg bg-amber-50 py-3 pl-8 pr-4 text-sm text-amber-900 dark:bg-amber-950 dark:text-amber-200"></ul>
 
-      <div id="bass-player-box" class="hidden">
-        <p class="mb-2 text-sm font-medium">Separated bass</p>
-        <audio id="bass-player" controls class="w-full"></audio>
+      <div id="player-box" class="sticky top-0 z-10 -mx-4 bg-stone-50/95 px-4 py-2 backdrop-blur dark:bg-stone-950/95">
+        <div class="mb-2 flex flex-wrap items-center justify-between gap-2 text-sm">
+          <span class="font-medium">Play along</span>
+          <div id="source-toggle" class="inline-flex overflow-hidden rounded-lg border border-stone-300 dark:border-stone-700" role="group" aria-label="Audio to play">
+            <button type="button" data-source="bass" class="source-button px-3 py-1">Bass only</button>
+            <button type="button" data-source="mix" class="source-button border-l border-stone-300 px-3 py-1 dark:border-stone-700">Full mix</button>
+          </div>
+        </div>
+        <audio id="player" controls preload="auto" class="w-full"></audio>
+        <p class="mt-1 text-xs text-stone-500">Tap a bar in the tab to jump there.</p>
       </div>
 
       <div>
@@ -122,9 +129,18 @@
             <button id="download-midi" type="button" class="rounded-lg border border-stone-300 px-3 py-1.5 hover:bg-stone-100 dark:border-stone-700 dark:hover:bg-stone-800">Download MIDI</button>
           </div>
         </div>
-        <pre id="tab" class="overflow-x-auto rounded-xl border border-stone-200 bg-white p-4 font-mono text-xs leading-tight sm:text-sm dark:border-stone-800 dark:bg-stone-900"></pre>
+        <div id="tab-view" class="space-y-4 rounded-xl border border-stone-200 bg-white p-4 font-mono text-sm dark:border-stone-800 dark:bg-stone-900"></div>
       </div>
       <p id="timings" class="font-mono text-xs text-stone-500"></p>
+    </section>
+
+    <section id="history" class="mt-10 hidden">
+      <div class="mb-3 flex flex-wrap items-baseline justify-between gap-2">
+        <h2 class="text-xl font-semibold">Your songs</h2>
+        <span id="storage-usage" class="text-xs text-stone-500"></span>
+      </div>
+      <p class="mb-3 text-sm text-stone-500">Saved in this browser only. Opening a song reuses its separated bass, so changing the settings and transcribing again takes seconds.</p>
+      <ul id="history-list" class="divide-y divide-stone-200 rounded-xl border border-stone-200 bg-white dark:divide-stone-800 dark:border-stone-800 dark:bg-stone-900"></ul>
     </section>
 
     <footer class="mt-12 text-center text-xs text-stone-500">

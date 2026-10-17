@@ -9,7 +9,7 @@ use crate::midi;
 use crate::model::{BasicPitch, MIDI_OFFSET};
 use crate::notes::{self, DecodeParams, Note};
 use crate::onsets::{self, RefineStats};
-use crate::tab;
+use crate::tab::{self, TabEvent};
 use crate::tuning::{pitch_name, Tuning};
 
 /// Recording tuning further than this from A440 is worth a warning.
@@ -59,6 +59,8 @@ pub struct Transcription {
     pub notes: Vec<TabNote>,
     pub tempo: Tempo,
     pub tuning_estimate: Option<TuningEstimate>,
+    /// Notes placed on the sixteenth-note grid, for interactive rendering.
+    pub events: Vec<TabEvent>,
     /// ASCII tablature.
     pub tab: String,
     /// Standard MIDI file with the detected notes.
@@ -176,5 +178,15 @@ pub fn transcribe(
         .zip(positions)
         .map(|((note, played_pitch), position)| TabNote { note, played_pitch, position })
         .collect();
-    Ok(Transcription { notes, tempo, tuning_estimate, tab, midi, warnings, raw_note_count: raw.len(), refine_stats })
+    Ok(Transcription {
+        notes,
+        tempo,
+        tuning_estimate,
+        events,
+        tab,
+        midi,
+        warnings,
+        raw_note_count: raw.len(),
+        refine_stats,
+    })
 }

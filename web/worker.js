@@ -4,16 +4,16 @@
 // Messages out: { id, type: "progress", stage, done, total }
 //               { id, type: "done", ... } | { id, type: "error", message }
 
-import init, {
-  separate_bass,
-  separation_weights_size_mb,
-  separation_weights_url,
-  transcribe,
-  transcription_sample_rate,
-} from "./pkg/bassline_web.js";
+// The page passes ?variant=mobile on phones and tablets: that build has GPU
+// kernel autotuning disabled, because it hangs Apple mobile GPUs.
+const variant = new URL(self.location.href).searchParams.get("variant") === "mobile" ? "pkg-mobile" : "pkg";
+const wasm = await import(`./${variant}/bassline_web.js`);
+const { separate_bass, separation_weights_size_mb, separation_weights_url, transcribe, transcription_sample_rate } =
+  wasm;
 
 const WEIGHTS_CACHE = "bassline-to-tab-weights-v1";
-const ready = init();
+const ready = wasm.default();
+console.info(`Loaded the ${variant} WebAssembly build`);
 
 async function openCache() {
   try {
