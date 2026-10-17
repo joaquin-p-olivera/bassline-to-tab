@@ -27,12 +27,20 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
+          components: clippy
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@v2
         with:
           tool: wasm-bindgen-cli@${{ env.WASM_BINDGEN_VERSION }}
 
-      - name: Build the WebAssembly modules and assemble the site
+      # Clippy runs as the compiler of the workspace crates during the release
+      # build, so the wasm dependencies are compiled once instead of again by a
+      # separate `cargo clippy` (dependencies still go through plain rustc).
+      # CLIPPY_ARGS is how cargo-clippy passes `-- -D warnings` to clippy-driver.
+      - name: Build the WebAssembly modules (with clippy) and assemble the site
+        env:
+          RUSTC_WORKSPACE_WRAPPER: clippy-driver
+          CLIPPY_ARGS: -D__CLIPPY_HACKERY__warnings__CLIPPY_HACKERY__
         run: |
           set -o pipefail
           if ! scripts/build-web.sh _site 2>&1 | tee build.log; then
