@@ -1,8 +1,11 @@
 //! Mapping pitches to string/fret positions on the bass neck.
 //!
-//! The MVP uses a greedy assignment: each note picks the position closest to
-//! where the fretting hand currently is. A natural next step is a Viterbi /
-//! dynamic-programming search over the whole note sequence.
+//! Positions are chosen for the whole note sequence at once with the Viterbi
+//! algorithm (dynamic programming): among all possible fingerings, it finds
+//! the one with the lowest total cost, where cost models how a bassist plays
+//! (stay in one hand position, prefer the lower part of the neck, avoid big
+//! jumps and unnecessary string crossings). A greedy note-by-note choice
+//! cannot recover once the hand drifts up the neck; this can.
 
 use crate::tuning::Tuning;
 
@@ -13,14 +16,20 @@ pub struct Position {
     pub fret: u8,
 }
 
-/// Cost added for every fret the hand has to move.
+/// Frets the hand covers without moving ("one finger per fret").
+const HAND_SPAN: u8 = 3;
+/// Cost per fret the hand has to shift beyond its span.
 const SHIFT_COST: f32 = 1.0;
-/// Cost added per fret number, so lower positions win ties.
-const HEIGHT_COST: f32 = 0.1;
-/// Cost added for every string crossed.
+/// Small cost per fret of any movement, so closer positions win ties.
+const MOVE_COST: f32 = 0.1;
+/// Cost per fret number: bass lines live in the lower part of the neck.
+const HEIGHT_COST: f32 = 0.08;
+/// Extra cost per fret above the 12th.
+const HIGH_FRET_COST: f32 = 0.3;
+/// Cost for every string crossed between consecutive notes.
 const STRING_CROSS_COST: f32 = 0.3;
-/// Flat cost for an open string (no hand movement needed).
-const OPEN_STRING_COST: f32 = 1.0;
+/// Flat cost of an open string (no hand needed, but less control).
+const OPEN_STRING_COST: f32 = 0.3;
 
 /// All positions where `pitch` can be played, given the tuning and number of frets.
 pub fn candidate_positions(pitch: u8, tuning: &Tuning, max_fret: u8) -> Vec<Position> {
@@ -49,37 +58,66 @@ pub fn fit_to_range(pitch: u8, tuning: &Tuning, max_fret: u8) -> Option<u8> {
     (fitted >= lowest).then_some(fitted)
 }
 
-fn transition_cost(candidate: Position, hand_fret: Option<u8>, previous_string: Option<usize>) -> f32 {
-    let string_cost = previous_string.map(|s| STRING_CROSS_COST * s.abs_diff(candidate.string) as f32).unwrap_or(0.0);
-    if candidate.fret == 0 {
-        return OPEN_STRING_COST + string_cost;
+fn position_cost(position: Position) -> f32 {
+    if position.fret == 0 {
+        return OPEN_STRING_COST;
     }
-    let shift = hand_fret.map(|hand| SHIFT_COST * f32::from(hand.abs_diff(candidate.fret))).unwrap_or(0.0);
-    shift + HEIGHT_COST * f32::from(candidate.fret) + string_cost
+    let fret = f32::from(position.fret);
+    HEIGHT_COST * fret + HIGH_FRET_COST * (fret - 12.0).max(0.0)
 }
 
-/// Greedily assigns a position to every pitch. Pitches that cannot be played
-/// get `None`.
+/// Cost of playing `to` right after `from`. Open strings do not move the hand.
+fn transition_cost(from: Position, to: Position) -> f32 {
+    let strings = STRING_CROSS_COST * from.string.abs_diff(to.string) as f32;
+    if from.fret == 0 || to.fret == 0 {
+        return strings;
+    }
+    let distance = from.fret.abs_diff(to.fret);
+    let shift = SHIFT_COST * f32::from(distance.saturating_sub(HAND_SPAN));
+    strings + shift + MOVE_COST * f32::from(distance)
+}
+
+/// Assigns a position to every pitch, minimizing the total fingering cost
+/// over the whole sequence. Pitches that cannot be played get `None` and
+/// do not affect their neighbours.
 pub fn assign_positions(pitches: &[u8], tuning: &Tuning, max_fret: u8) -> Vec<Option<Position>> {
-    let mut hand_fret: Option<u8> = None;
-    let mut previous_string: Option<usize> = None;
-    pitches
-        .iter()
-        .map(|pitch| {
-            let best = candidate_positions(*pitch, tuning, max_fret).into_iter().min_by(|a, b| {
-                transition_cost(*a, hand_fret, previous_string).total_cmp(&transition_cost(
-                    *b,
-                    hand_fret,
-                    previous_string,
-                ))
-            })?;
-            if best.fret > 0 {
-                hand_fret = Some(best.fret);
-            }
-            previous_string = Some(best.string);
-            Some(best)
-        })
-        .collect()
+    let candidates: Vec<Vec<Position>> = pitches.iter().map(|p| candidate_positions(*p, tuning, max_fret)).collect();
+    let playable: Vec<usize> = (0..pitches.len()).filter(|i| !candidates[*i].is_empty()).collect();
+    let mut result = vec![None; pitches.len()];
+    let Some(&first) = playable.first() else {
+        return result;
+    };
+
+    // costs[k][j]: cheapest total cost ending at candidate j of the k-th playable note.
+    // back[k][j]: which candidate of the previous playable note that path came from.
+    let mut costs: Vec<Vec<f32>> = vec![candidates[first].iter().map(|p| position_cost(*p)).collect()];
+    let mut back: Vec<Vec<usize>> = vec![vec![0; candidates[first].len()]];
+    for window in playable.windows(2) {
+        let (previous, current) = (&candidates[window[0]], &candidates[window[1]]);
+        let previous_costs = costs.last().expect("at least one step");
+        let (mut step_costs, mut step_back) = (Vec::with_capacity(current.len()), Vec::with_capacity(current.len()));
+        for to in current {
+            let (best_from, best_cost) = previous
+                .iter()
+                .enumerate()
+                .map(|(i, from)| (i, previous_costs[i] + transition_cost(*from, *to)))
+                .min_by(|a, b| a.1.total_cmp(&b.1))
+                .expect("candidates are non-empty");
+            step_costs.push(best_cost + position_cost(*to));
+            step_back.push(best_from);
+        }
+        costs.push(step_costs);
+        back.push(step_back);
+    }
+
+    // Walk back from the cheapest final position.
+    let last_costs = costs.last().expect("at least one step");
+    let mut choice = (0..last_costs.len()).min_by(|a, b| last_costs[*a].total_cmp(&last_costs[*b])).expect("non-empty");
+    for (k, &note_index) in playable.iter().enumerate().rev() {
+        result[note_index] = Some(candidates[note_index][choice]);
+        choice = back[k][choice];
+    }
+    result
 }
 
 #[cfg(test)]
@@ -117,6 +155,28 @@ mod tests {
         let positions = assign_positions(&[31, 33, 35, 36], &tuning, 24);
         let frets: Vec<(usize, u8)> = positions.iter().map(|p| p.map(|p| (p.string, p.fret)).unwrap()).collect();
         assert_eq!(frets, vec![(0, 3), (1, 0), (1, 2), (1, 3)]);
+    }
+
+    #[test]
+    fn returns_to_low_position_after_a_high_phrase() {
+        // E3 E3 then a run of E2 G2 A2: the E2s belong at the bottom of the
+        // neck, not 12 frets up where a greedy choice following the hand ends.
+        let tuning = standard();
+        let pitches = [52, 52, 40, 43, 45, 40, 43, 45, 40];
+        let positions = assign_positions(&pitches, &tuning, 24);
+        for (pitch, position) in pitches.iter().zip(&positions).skip(2) {
+            let position = position.unwrap();
+            assert!(position.fret <= 7, "pitch {pitch} placed at {position:?}");
+        }
+    }
+
+    #[test]
+    fn skips_unplayable_notes_without_breaking_the_rest() {
+        let tuning = standard();
+        let positions = assign_positions(&[20, 28, 33], &tuning, 24);
+        assert_eq!(positions[0], None);
+        assert_eq!(positions[1], Some(Position { string: 0, fret: 0 }));
+        assert!(positions[2].is_some());
     }
 
     #[test]

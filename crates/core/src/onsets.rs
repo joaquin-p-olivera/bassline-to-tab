@@ -33,9 +33,13 @@ fn energy_envelope(audio: &[f32], sample_rate: u32) -> (Vec<f64>, f64) {
     (envelope, hop as f64 / f64::from(sample_rate))
 }
 
-/// A note without its own attack that ends this close to the next note of the
-/// same pitch is treated as a pre-echo of that note.
+/// A note is treated as a pre-echo of the next one only if all of these hold:
+/// it has no attack of its own, the next note has the same pitch and starts
+/// within this gap, it is short, and it is clearly weaker. On real bass lines,
+/// repeated notes often have soft attacks, so a looser rule deletes real notes.
 const PRE_ECHO_MAX_GAP_S: f64 = 0.03;
+const PRE_ECHO_MAX_DURATION_S: f64 = 0.15;
+const PRE_ECHO_MAX_RELATIVE_AMPLITUDE: f32 = 0.7;
 
 /// What [`refine_onsets`] changed.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -84,7 +88,12 @@ pub fn refine_onsets(notes: &mut Vec<Note>, audio: &[f32], sample_rate: u32) -> 
     let is_pre_echo = |i: usize| {
         let (note, next) = (&notes[i], notes.get(i + 1));
         !confirmed[i]
-            && next.is_some_and(|next| next.pitch == note.pitch && next.start - note.end <= PRE_ECHO_MAX_GAP_S)
+            && note.end - note.start < PRE_ECHO_MAX_DURATION_S
+            && next.is_some_and(|next| {
+                next.pitch == note.pitch
+                    && next.start - note.end <= PRE_ECHO_MAX_GAP_S
+                    && note.amplitude < PRE_ECHO_MAX_RELATIVE_AMPLITUDE * next.amplitude
+            })
     };
     let keep: Vec<bool> = (0..notes.len()).map(|i| !is_pre_echo(i)).collect();
     let before = notes.len();
@@ -137,11 +146,21 @@ mod tests {
     fn drops_pre_echoes_without_an_attack() {
         // One real pluck at 1.0 s; the model also reported the same pitch from 0.9 s.
         let audio = plucks(&[1.0], 2.0);
-        let mut notes = vec![Note { end: 0.98, ..note(0.9) }, note(0.98)];
+        let mut notes = vec![Note { end: 0.98, amplitude: 0.3, ..note(0.9) }, note(0.98)];
         let stats = refine_onsets(&mut notes, &audio, SR);
         assert_eq!(stats, RefineStats { adjusted: 1, dropped: 1 });
         assert_eq!(notes.len(), 1);
         assert!((notes[0].start - 1.0).abs() < 0.008, "got {}", notes[0].start);
+    }
+
+    #[test]
+    fn keeps_long_or_strong_notes_even_without_an_attack() {
+        // Legato repeated notes on real bass often show no clear energy rise.
+        let audio = vec![0.1f32; 2 * SR as usize];
+        let mut long = vec![Note { end: 0.9, ..note(0.5) }, note(0.9)];
+        assert_eq!(refine_onsets(&mut long, &audio, SR).dropped, 0);
+        let mut strong = vec![Note { end: 0.6, amplitude: 0.7, ..note(0.5) }, note(0.6)];
+        assert_eq!(refine_onsets(&mut strong, &audio, SR).dropped, 0);
     }
 
     #[test]

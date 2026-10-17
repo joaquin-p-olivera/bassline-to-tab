@@ -143,6 +143,8 @@ pub fn transcribe(
         );
     }
     let mut line = notes::to_monophonic(&raw);
+    let octave_fixes = notes::correct_octaves(&mut line, &posteriorgram, options.tuning.lowest());
+    info!("Moved {octave_fixes} notes down an octave (harmonic detected instead of the fundamental)");
     let refine_stats = onsets::refine_onsets(&mut line, samples, crate::model::SAMPLE_RATE);
     info!(
         "Detected {} notes ({} raw; {} onsets refined, {} pre-echoes dropped)",

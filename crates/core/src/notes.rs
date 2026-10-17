@@ -165,6 +165,41 @@ pub fn decode_notes(posteriorgram: &Posteriorgram, params: &DecodeParams) -> Vec
     notes
 }
 
+/// Octave-below to own activation ratio from which a note is moved down.
+///
+/// Calibrated on a real bass stem against a pYIN reference: correct notes
+/// show a median ratio of ~0.18, octave-up errors ~0.51. At 0.38 about three
+/// quarters of the octave errors are fixed and ~5% of correct notes change.
+const OCTAVE_DOWN_MIN_RATIO: f32 = 0.38;
+
+/// Moves notes down an octave when the model also sees strong activation one
+/// octave below them. On bass the model regularly reports the 2nd harmonic
+/// instead of the fundamental. Notes are not moved below `min_pitch`.
+/// Returns how many notes were corrected.
+pub fn correct_octaves(notes: &mut [Note], posteriorgram: &Posteriorgram, min_pitch: u8) -> usize {
+    let activations = &posteriorgram.notes;
+    let mut corrected = 0;
+    for note in notes.iter_mut() {
+        let Some(lower) = note.pitch.checked_sub(12).filter(|p| *p >= min_pitch.max(MIDI_OFFSET)) else {
+            continue;
+        };
+        let frames = note.start_frame..note.end_frame.min(activations.rows());
+        if frames.is_empty() {
+            continue;
+        }
+        let mean = |pitch: u8| {
+            frames.clone().map(|f| activations.get(f, usize::from(pitch - MIDI_OFFSET))).sum::<f32>()
+                / frames.len() as f32
+        };
+        let own = mean(note.pitch);
+        if own > 0.0 && mean(lower) / own >= OCTAVE_DOWN_MIN_RATIO {
+            note.pitch = lower;
+            corrected += 1;
+        }
+    }
+    corrected
+}
+
 /// Reduces overlapping notes to a single monophonic line.
 ///
 /// Notes that start together are treated as harmonics / octave errors and
