@@ -124,6 +124,7 @@ function readOptions() {
   return {
     tuning: tuningValue(),
     frets: parseInt($("frets").value, 10) || 24,
+    fingering: $("fingering").value,
     bpm: Number.isFinite(bpm) ? bpm : null,
     onsetThreshold: parseFloat($("onset-threshold").value),
     minNoteMs: parseFloat($("min-note").value) || 80,

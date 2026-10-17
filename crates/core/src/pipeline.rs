@@ -4,7 +4,7 @@ use anyhow::{bail, Result};
 use log::{debug, info, warn};
 
 use crate::analysis::{self, Tempo, TuningEstimate};
-use crate::fretboard::{self, Position};
+use crate::fretboard::{self, FingeringStyle, Position};
 use crate::midi;
 use crate::model::{BasicPitch, MIDI_OFFSET};
 use crate::notes::{self, DecodeParams, Note};
@@ -22,6 +22,8 @@ const MODEL_FRAMES_PER_SECOND: f64 = 86.0;
 pub struct Options {
     pub tuning: Tuning,
     pub frets: u8,
+    /// Which strings to prefer when a pitch fits on several.
+    pub fingering: FingeringStyle,
     /// Tempo in BPM; estimated from the notes when `None`.
     pub bpm: Option<f64>,
     pub onset_threshold: f32,
@@ -35,6 +37,7 @@ impl Default for Options {
         Self {
             tuning: Tuning::from_spec("standard").expect("built-in preset"),
             frets: 24,
+            fingering: FingeringStyle::default(),
             bpm: None,
             onset_threshold: 0.5,
             frame_threshold: 0.3,
@@ -117,7 +120,7 @@ fn assign_frets(line: &[Note], options: &Options) -> (Vec<u8>, Vec<Option<Positi
             options.tuning.describe()
         )
     });
-    let positions = fretboard::assign_positions(&played, &options.tuning, options.frets);
+    let positions = fretboard::assign_positions(&played, &options.tuning, options.frets, options.fingering);
     (played, positions, warning)
 }
 

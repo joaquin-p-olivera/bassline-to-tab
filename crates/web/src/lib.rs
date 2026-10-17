@@ -12,6 +12,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use bassline_core::fretboard::FingeringStyle;
 use bassline_core::model::{BasicPitch, SAMPLE_RATE};
 use bassline_core::pipeline::{self, Options, Transcription};
 use bassline_core::tab;
@@ -79,6 +80,8 @@ fn basic_pitch() -> Result<Rc<BasicPitch>, JsError> {
 struct JsOptions {
     tuning: String,
     frets: Option<u8>,
+    /// `"open-position"` (default) or `"lower-strings"`.
+    fingering: Option<String>,
     bpm: Option<f64>,
     onset_threshold: Option<f32>,
     frame_threshold: Option<f32>,
@@ -92,6 +95,10 @@ impl JsOptions {
         Ok(Options {
             tuning: Tuning::from_spec(&self.tuning)?,
             frets: self.frets.unwrap_or(defaults.frets),
+            fingering: match self.fingering.as_deref() {
+                Some(spec) => FingeringStyle::from_spec(spec)?,
+                None => defaults.fingering,
+            },
             bpm: self.bpm.filter(|bpm| *bpm > 0.0),
             onset_threshold: self.onset_threshold.unwrap_or(defaults.onset_threshold),
             frame_threshold: self.frame_threshold.unwrap_or(defaults.frame_threshold),
