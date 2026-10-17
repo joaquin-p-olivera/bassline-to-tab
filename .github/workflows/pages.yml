@@ -33,7 +33,16 @@ jobs:
           tool: wasm-bindgen-cli@${{ env.WASM_BINDGEN_VERSION }}
 
       - name: Build the WebAssembly module
-        run: cargo build -p bassline-web --release --target wasm32-unknown-unknown
+        run: |
+          set -o pipefail
+          if ! cargo build -p bassline-web --release --target wasm32-unknown-unknown 2>&1 | tee build.log; then
+            # Surface compiler errors as annotations, readable through the API.
+            grep -E '^error' -A14 build.log | head -120 | split -l 30 - chunk_
+            for chunk in chunk_*; do
+              echo "::error title=wasm build::$(sed ':a;N;$!ba;s/%/%25/g;s/\r/%0D/g;s/\n/%0A/g' "$chunk")"
+            done
+            exit 1
+          fi
 
       - name: Assemble the site
         run: |
@@ -52,7 +61,14 @@ jobs:
           pip install --quiet numpy
           npm install
           npx playwright install --with-deps chromium
-          npx playwright test --reporter=list
+          set -o pipefail
+          if ! npx playwright test --reporter=list 2>&1 | tee e2e.log; then
+            tail -60 e2e.log | split -l 30 - chunk_
+            for chunk in chunk_*; do
+              echo "::error title=e2e::$(sed ':a;N;$!ba;s/%/%25/g;s/\r/%0D/g;s/\n/%0A/g' "$chunk")"
+            done
+            exit 1
+          fi
 
       - uses: actions/upload-pages-artifact@v3
         if: github.ref == 'refs/heads/main'
