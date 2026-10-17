@@ -21,35 +21,42 @@ let currentSong = null;
 let currentResult = null;
 let playerUrls = { bass: null, mix: null };
 
-// ─── Device & worker ────────────────────────────────────────────────────────
+// ─── Worker ─────────────────────────────────────────────────────────────────
 
-function isMobileDevice() {
-  const ua = navigator.userAgent;
-  // iPadOS reports itself as a Mac; touch support gives it away.
-  return /Android|iPhone|iPad|iPod/i.test(ua) || (ua.includes("Macintosh") && navigator.maxTouchPoints > 1);
-}
-
-const workerUrl = new URL(`./worker.js${isMobileDevice() ? "?variant=mobile" : ""}`, import.meta.url);
-const worker = new Worker(workerUrl, { type: "module" });
 const pending = new Map();
 let nextRequestId = 1;
+let worker = null;
 
-worker.onmessage = ({ data }) => {
-  const request = pending.get(data.id);
-  if (!request) return;
-  if (data.type === "progress") {
-    request.onProgress?.(data);
-    return;
-  }
-  pending.delete(data.id);
-  if (data.type === "error") request.reject(new Error(data.message));
-  else request.resolve(data);
-};
-
-worker.onerror = (event) => {
-  for (const request of pending.values()) request.reject(new Error(event.message || "The worker crashed"));
+function rejectPending(message) {
+  for (const request of pending.values()) request.reject(new Error(message));
   pending.clear();
-};
+}
+
+/// (Re)creates the worker. After a Rust panic or a lost GPU device the
+/// WebAssembly instance is unusable, so a fresh worker lets the user retry
+/// without reloading the page.
+function startWorker() {
+  worker?.terminate();
+  worker = new Worker(new URL("./worker.js", import.meta.url), { type: "module" });
+  worker.onmessage = ({ data }) => {
+    const request = pending.get(data.id);
+    if (!request) return;
+    if (data.type === "progress") {
+      request.onProgress?.(data);
+      return;
+    }
+    pending.delete(data.id);
+    if (data.type === "error") request.reject(new Error(data.message));
+    else request.resolve(data);
+  };
+  worker.onerror = (event) => {
+    console.error("Worker crashed:", event.message);
+    rejectPending(event.message || "The worker crashed");
+    startWorker();
+  };
+}
+
+startWorker();
 
 function callWorker(type, payload = {}, transfer = [], onProgress = null) {
   const id = nextRequestId++;
@@ -451,6 +458,8 @@ form.addEventListener("submit", async (event) => {
     await run(song);
   } catch (error) {
     console.error(error);
+    // A panic inside WebAssembly leaves the module unusable; start clean.
+    startWorker();
     setProgress(null);
     setStatus("Something went wrong", { busy: false, error: error.message || String(error) });
   } finally {

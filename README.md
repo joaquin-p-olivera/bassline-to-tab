@@ -37,7 +37,7 @@ Features:
 | `crates/core` | Rust | Platform-agnostic transcription: Basic Pitch inference (ONNX via [tract](https://github.com/sonos/tract), model embedded), note decoding, onset refinement, tuning and tempo estimation, fret assignment, ASCII tab, MIDI. |
 | `crates/web` | Rust → wasm | `wasm-bindgen` bindings: `separate_bass` (HTDemucs via [demucs-rs](https://github.com/nikhilunni/demucs-rs) on WebGPU) and `transcribe`. |
 | `web/` | HTML/JS | The page (`index.html`, `app.js`), the worker (`worker.js`), the interactive tab (`tab-view.js`) and the song history (`storage.js`). |
-| `scripts/build-web.sh` | Bash | Builds both wasm variants and assembles the site. |
+| `scripts/build-web.sh` | Bash | Builds the wasm module and assembles the site. |
 | `.github/workflows/pages.yml` | CI | Builds the wasm, runs an end-to-end test in headless Chromium, deploys to GitHub Pages. |
 
 The first separation downloads the HTDemucs weights (~84 MB) from Hugging
@@ -96,9 +96,9 @@ scripts/build-web.sh                               # builds into _site/
 python3 -m http.server 8000 --directory _site      # open http://localhost:8000
 ```
 
-Two builds of the module are produced: `pkg/` with GPU kernel autotuning
-(desktop; much faster separation) and `pkg-mobile/` without it (autotuning
-hangs Apple mobile GPUs). The page picks one based on the device.
+The module is built without GPU kernel autotuning: while benchmarking kernel
+variants for HTDemucs, some run past the GPU watchdog (Apple mobile GPUs hang,
+and macOS kills the command buffer with a GPU timeout).
 
 End-to-end test (after assembling `_site`):
 

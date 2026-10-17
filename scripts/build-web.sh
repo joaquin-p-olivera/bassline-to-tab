@@ -3,11 +3,11 @@
 #
 # Usage: scripts/build-web.sh [output-dir]   (default: _site)
 #
-# Two variants of the module are built:
-#   pkg/         with GPU kernel autotuning (desktop browsers)
-#   pkg-mobile/  without it (phones and tablets; autotune hangs Apple mobile GPUs)
-# The page picks one at runtime. Requires the wasm32-unknown-unknown target
-# and wasm-bindgen-cli matching the wasm-bindgen version in Cargo.lock.
+# The module is built without GPU kernel autotuning: benchmarking kernel
+# variants makes some run past the GPU watchdog (Apple mobile GPUs hang, and
+# on macOS the command buffer is killed with a GPU timeout).
+# Requires the wasm32-unknown-unknown target and wasm-bindgen-cli matching
+# the wasm-bindgen version in Cargo.lock.
 set -euo pipefail
 
 OUT_DIR="${1:-_site}"
@@ -25,7 +25,6 @@ rm -rf "${OUT_DIR}"
 mkdir -p "${OUT_DIR}"
 cp web/index.html web/*.js "${OUT_DIR}/"
 
-build_variant pkg --features autotune
-build_variant pkg-mobile
+build_variant pkg
 
-ls -la "${OUT_DIR}" "${OUT_DIR}/pkg" "${OUT_DIR}/pkg-mobile"
+ls -la "${OUT_DIR}" "${OUT_DIR}/pkg"
