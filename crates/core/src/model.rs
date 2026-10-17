@@ -112,6 +112,11 @@ impl BasicPitch {
     /// activations at every window boundary (and a fake onset when a note
     /// starts nearby). Here the overlapping frames are cross-faded instead.
     pub fn run(&self, audio: &[f32]) -> Result<Posteriorgram> {
+        self.run_with_progress(audio, &mut |_, _| {})
+    }
+
+    /// Like [`run`](Self::run), calling `progress(done, total)` after each window.
+    pub fn run_with_progress(&self, audio: &[f32], progress: &mut dyn FnMut(usize, usize)) -> Result<Posteriorgram> {
         let mut padded = vec![0.0f32; OVERLAP_SAMPLES / 2];
         padded.extend_from_slice(audio);
 
@@ -161,6 +166,7 @@ impl BasicPitch {
             if (window_index + 1) % 20 == 0 {
                 debug!("Processed {}/{} windows", window_index + 1, n_windows);
             }
+            progress(window_index + 1, n_windows);
         }
 
         // Slot `OVERLAP_FRAMES / 2` is the first frame of real audio (the rest is padding).

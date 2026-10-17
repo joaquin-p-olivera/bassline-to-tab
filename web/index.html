@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Bassline to Tab</title>
+  <meta name="description" content="Turn a song into bass tablature, entirely in your browser.">
   <script src="https://cdn.tailwindcss.com/3.4.17"></script>
 </head>
 <body class="min-h-screen bg-stone-50 text-stone-900 dark:bg-stone-950 dark:text-stone-100">
@@ -11,20 +12,22 @@
     <header class="mb-8">
       <h1 class="text-3xl font-bold tracking-tight">Bassline to Tab</h1>
       <p class="mt-2 text-stone-600 dark:text-stone-400">
-        Upload a song and get its bass line as tablature. The bass is separated from the mix with
-        Demucs and transcribed with Basic Pitch.
+        Choose a song and get its bass line as tablature. Everything runs on this device: the bass is
+        separated with Demucs (on the GPU) and transcribed with Basic Pitch. Your audio is never uploaded.
       </p>
     </header>
+
+    <p id="gpu-warning" class="mb-6 hidden rounded-lg bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:bg-amber-950 dark:text-amber-200" role="status"></p>
 
     <form id="form" class="space-y-6 rounded-xl border border-stone-200 bg-white p-6 shadow-sm dark:border-stone-800 dark:bg-stone-900">
       <div>
         <label for="audio" class="mb-2 block text-sm font-medium">Audio file</label>
         <label id="drop" for="audio"
           class="flex cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed border-stone-300 px-4 py-8 text-center transition hover:border-amber-500 dark:border-stone-700">
-          <span id="file-label" class="text-stone-600 dark:text-stone-400">Click to choose a file, or drop it here</span>
-          <span class="mt-1 text-xs text-stone-500">wav, mp3, flac, ogg, m4a, aac</span>
+          <span id="file-label" class="text-stone-600 dark:text-stone-400">Tap to choose a file, or drop it here</span>
+          <span class="mt-1 text-xs text-stone-500">mp3, m4a, wav, flac, ogg (whatever your browser can play)</span>
         </label>
-        <input id="audio" name="audio" type="file" accept=".wav,.mp3,.flac,.ogg,.m4a,.aac,audio/*" class="sr-only" required>
+        <input id="audio" name="audio" type="file" accept="audio/*,.mp3,.m4a,.wav,.flac,.ogg,.aac" class="sr-only" required>
       </div>
 
       <div class="grid gap-4 sm:grid-cols-2">
@@ -61,10 +64,29 @@
         </label>
       </div>
 
+      <details class="text-sm">
+        <summary class="cursor-pointer select-none font-medium">Advanced</summary>
+        <div class="mt-4 grid gap-4 sm:grid-cols-2">
+          <div>
+            <label for="onset-threshold" class="mb-2 block">Onset threshold <span id="onset-value" class="font-mono text-stone-500">0.50</span></label>
+            <input id="onset-threshold" type="range" min="0.2" max="0.8" step="0.05" value="0.5" class="w-full accent-amber-600">
+            <span class="text-xs text-stone-500">Lower finds quieter notes (and more false ones).</span>
+          </div>
+          <div>
+            <label for="min-note" class="mb-2 block">Shortest note (ms)</label>
+            <input id="min-note" type="number" min="20" max="500" value="80"
+              class="w-full rounded-lg border border-stone-300 bg-white px-3 py-2 dark:border-stone-700 dark:bg-stone-950">
+          </div>
+        </div>
+      </details>
+
       <button id="submit" type="submit"
         class="w-full rounded-lg bg-amber-600 px-4 py-3 font-semibold text-white transition hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-50">
         Transcribe
       </button>
+      <p class="text-xs text-stone-500">
+        The first separation downloads the Demucs model (<span id="weights-size">~84</span> MB). It is cached for next time.
+      </p>
     </form>
 
     <section id="status" class="mt-6 hidden rounded-xl border border-stone-200 bg-white p-6 dark:border-stone-800 dark:bg-stone-900" aria-live="polite">
@@ -75,30 +97,40 @@
         </svg>
         <p id="status-text" class="font-medium"></p>
       </div>
-      <div id="upload-bar" class="mt-4 hidden h-2 overflow-hidden rounded-full bg-stone-200 dark:bg-stone-800">
-        <div id="upload-fill" class="h-full w-0 bg-amber-600 transition-all"></div>
+      <div id="progress-bar" class="mt-4 hidden h-2 overflow-hidden rounded-full bg-stone-200 dark:bg-stone-800">
+        <div id="progress-fill" class="h-full w-0 bg-amber-600 transition-all"></div>
       </div>
       <p id="progress" class="mt-3 truncate font-mono text-xs text-stone-500"></p>
       <p id="error" class="mt-3 hidden rounded-lg bg-red-50 px-3 py-2 text-sm text-red-800 dark:bg-red-950 dark:text-red-200" role="alert"></p>
     </section>
 
-    <section id="result" class="mt-6 hidden">
-      <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
-        <h2 class="text-xl font-semibold">Tablature</h2>
-        <div class="flex flex-wrap gap-2 text-sm">
-          <button id="copy" type="button" class="rounded-lg border border-stone-300 px-3 py-1.5 hover:bg-stone-100 dark:border-stone-700 dark:hover:bg-stone-800">Copy</button>
-          <button id="download-tab" type="button" class="rounded-lg border border-stone-300 px-3 py-1.5 hover:bg-stone-100 dark:border-stone-700 dark:hover:bg-stone-800">Download .txt</button>
-          <a id="download-midi" href="#" hidden class="rounded-lg border border-stone-300 px-3 py-1.5 hover:bg-stone-100 dark:border-stone-700 dark:hover:bg-stone-800">Download MIDI</a>
-        </div>
+    <section id="result" class="mt-6 hidden space-y-4">
+      <dl id="summary" class="grid grid-cols-2 gap-x-4 gap-y-2 rounded-xl border border-stone-200 bg-white p-4 text-sm sm:grid-cols-4 dark:border-stone-800 dark:bg-stone-900"></dl>
+      <ul id="warnings" class="hidden list-disc space-y-1 rounded-lg bg-amber-50 py-3 pl-8 pr-4 text-sm text-amber-900 dark:bg-amber-950 dark:text-amber-200"></ul>
+
+      <div id="bass-player-box" class="hidden">
+        <p class="mb-2 text-sm font-medium">Separated bass</p>
+        <audio id="bass-player" controls class="w-full"></audio>
       </div>
-      <pre id="tab" class="overflow-x-auto rounded-xl border border-stone-200 bg-white p-4 font-mono text-sm leading-tight dark:border-stone-800 dark:bg-stone-900"></pre>
-      <p class="mt-3 text-xs text-stone-500">Results are deleted from the server after one hour.</p>
+
+      <div>
+        <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <h2 class="text-xl font-semibold">Tablature</h2>
+          <div class="flex flex-wrap gap-2 text-sm">
+            <button id="copy" type="button" class="rounded-lg border border-stone-300 px-3 py-1.5 hover:bg-stone-100 dark:border-stone-700 dark:hover:bg-stone-800">Copy</button>
+            <button id="download-tab" type="button" class="rounded-lg border border-stone-300 px-3 py-1.5 hover:bg-stone-100 dark:border-stone-700 dark:hover:bg-stone-800">Download .txt</button>
+            <button id="download-midi" type="button" class="rounded-lg border border-stone-300 px-3 py-1.5 hover:bg-stone-100 dark:border-stone-700 dark:hover:bg-stone-800">Download MIDI</button>
+          </div>
+        </div>
+        <pre id="tab" class="overflow-x-auto rounded-xl border border-stone-200 bg-white p-4 font-mono text-xs leading-tight sm:text-sm dark:border-stone-800 dark:bg-stone-900"></pre>
+      </div>
+      <p id="timings" class="font-mono text-xs text-stone-500"></p>
     </section>
 
     <footer class="mt-12 text-center text-xs text-stone-500">
       <a class="underline hover:text-stone-700 dark:hover:text-stone-300" href="https://github.com/joaquin-p-olivera/bassline-to-tab">Source on GitHub</a>
     </footer>
   </main>
-  <script src="/app.js"></script>
+  <script type="module" src="./app.js"></script>
 </body>
 </html>

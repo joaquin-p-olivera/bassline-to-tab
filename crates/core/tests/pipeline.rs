@@ -1,10 +1,11 @@
 //! End-to-end check: synthesize a known bass riff, run the real model and
 //! make sure the transcription recovers the notes and the tempo.
 
-use bassline_to_tab::analysis::estimate_tempo;
-use bassline_to_tab::model::{BasicPitch, SAMPLE_RATE};
-use bassline_to_tab::notes::{decode_notes, to_monophonic, DecodeParams};
-use bassline_to_tab::onsets::refine_onsets;
+use bassline_core::analysis::estimate_tempo;
+use bassline_core::model::{BasicPitch, SAMPLE_RATE};
+use bassline_core::notes::{decode_notes, to_monophonic, DecodeParams};
+use bassline_core::onsets::refine_onsets;
+use bassline_core::pipeline::{transcribe, Options};
 
 const BPM: f64 = 100.0;
 const LEAD_IN_S: f64 = 0.5;
@@ -59,4 +60,23 @@ fn transcribes_a_synthetic_riff() {
     let tempo = estimate_tempo(&line, None);
     assert!((tempo.bpm - BPM).abs() < 1.0, "tempo was {}", tempo.bpm);
     assert!((tempo.origin - LEAD_IN_S).abs() < 0.03, "grid origin was {}", tempo.origin);
+}
+
+#[test]
+fn pipeline_produces_a_playable_tab() {
+    let audio = synthesize_riff(2);
+    let model = BasicPitch::load().unwrap();
+    let mut last_progress = (0, 0);
+    let result =
+        transcribe(&model, &audio, &Options::default(), &mut |done, total| last_progress = (done, total)).unwrap();
+
+    assert_eq!(last_progress.0, last_progress.1, "progress should reach the total");
+    assert_eq!(result.notes.len(), 2 * RIFF.len());
+    assert!(result.notes.iter().all(|n| n.position.is_some()));
+    assert!((result.tempo.bpm - BPM).abs() < 1.0);
+    assert!(result.warnings.is_empty(), "unexpected warnings: {:?}", result.warnings);
+    // First bar of the riff: E0 E0 E3 on the E string, then A0 A2 A3.
+    let e_string = result.tab.lines().find(|l| l.starts_with("E|")).unwrap();
+    assert!(e_string.starts_with("E|0-------0---3---"), "got {e_string}");
+    assert!(result.midi.starts_with(b"MThd"));
 }

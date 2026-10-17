@@ -1,4 +1,9 @@
 /target
+/_site
+web/pkg/
+web/e2e/node_modules/
+web/e2e/test-results/
+web/e2e/playwright-report/
+web/e2e/riff.wav
 *.mid
 *.tab.txt
-separated/

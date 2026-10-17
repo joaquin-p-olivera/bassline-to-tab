@@ -1,8 +1,17 @@
 bassline-to-tab
 Copyright (c) 2026 Joaquín
 
-This product includes the Basic Pitch model (models/basic_pitch_nmp.onnx) and a
-Rust port of its note-creation algorithm (src/notes.rs).
+This product includes the Basic Pitch model (crates/core/models/basic_pitch_nmp.onnx)
+and a Rust port of its note-creation algorithm (crates/core/src/notes.rs).
 Basic Pitch, Copyright 2022 Spotify AB, licensed under the Apache License 2.0.
-See models/LICENSE-basic-pitch and models/NOTICE-basic-pitch.
+See crates/core/models/LICENSE-basic-pitch and crates/core/models/NOTICE-basic-pitch.
 Source: https://github.com/spotify/basic-pitch (version 0.4.0)
+
+The WebAssembly build includes demucs-core from demucs-rs, licensed under the
+Apache License 2.0. Source: https://github.com/nikhilunni/demucs-rs
+(commit 5d9f61a2e15987c5ea9a9fe92300b64d994bcd12)
+
+At runtime the web app downloads the HTDemucs model weights, which come from
+Demucs (https://github.com/facebookresearch/demucs), Copyright (c) Meta
+Platforms, Inc. and affiliates, licensed under the MIT License. The weights
+are not redistributed in this repository.

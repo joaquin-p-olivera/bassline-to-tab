@@ -1,39 +1,20 @@
-[package]
-name = "bassline-to-tab"
-version = "0.1.0"
+[workspace]
+members = ["crates/core", "crates/web"]
+default-members = ["crates/core"]
+resolver = "2"
+
+[workspace.package]
+version = "0.2.0"
 edition = "2021"
 rust-version = "1.91"
-description = "Transcribe the bass line of a song into bass tablature"
 license = "MIT"
 repository = "https://github.com/joaquin-p-olivera/bassline-to-tab"
-readme = "README.md"
-
-[features]
-# Web server (HTTP API + web UI) in the `bassline-to-tab-server` binary.
-server = ["dep:axum", "dep:libc", "dep:serde", "dep:tokio", "dep:uuid"]
-
-[[bin]]
-name = "bassline-to-tab-server"
-path = "src/server/main.rs"
-required-features = ["server"]
-
-[dependencies]
-anyhow = "1"
-clap = { version = "4", features = ["derive"] }
-env_logger = "0.11"
-log = "0.4"
-midly = "0.5"
-rubato = "5"
-symphonia = { version = "0.6", features = ["all"] }
-tract-onnx = "0.23"
-
-# Only used by the server binary.
-axum = { version = "0.8", features = ["multipart"], optional = true }
-libc = { version = "0.2", optional = true }
-serde = { version = "1", features = ["derive"], optional = true }
-tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"], optional = true }
-uuid = { version = "1", features = ["v4"], optional = true }
 
 [profile.dev.package."*"]
 # Dependencies (tract in particular) are unusably slow without optimizations.
 opt-level = 3
+
+[profile.release]
+lto = true
+opt-level = 3
+codegen-units = 1

@@ -1,0 +1,72 @@
+name: Web app
+
+on:
+  push:
+    branches: ["**"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  WASM_BINDGEN_VERSION: 0.2.129
+
+jobs:
+  build:
+    name: Build and test the site
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-bindgen-cli@${{ env.WASM_BINDGEN_VERSION }}
+
+      - name: Build the WebAssembly module
+        run: cargo build -p bassline-web --release --target wasm32-unknown-unknown
+
+      - name: Assemble the site
+        run: |
+          mkdir -p _site
+          cp web/index.html web/app.js web/worker.js _site/
+          wasm-bindgen --target web --out-dir _site/pkg \
+            target/wasm32-unknown-unknown/release/bassline_web.wasm
+          ls -la _site _site/pkg
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: End-to-end test (isolated bass, no separation)
+        working-directory: web/e2e
+        run: |
+          pip install --quiet numpy
+          npm install
+          npx playwright install --with-deps chromium
+          npx playwright test --reporter=list
+
+      - uses: actions/upload-pages-artifact@v3
+        if: github.ref == 'refs/heads/main'
+        with:
+          path: _site
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
