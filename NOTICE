@@ -1,5 +1,5 @@
 bassline-to-tab
-Copyright (c) 2026 Joaquín
+Copyright (c) 2026 Joaquín Enrique Parrilla Olivera
 
 This product includes the Basic Pitch model (crates/core/models/basic_pitch_nmp.onnx)
 and a Rust port of its note-creation algorithm (crates/core/src/notes.rs).
