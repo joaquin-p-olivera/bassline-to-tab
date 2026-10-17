@@ -102,3 +102,31 @@ test("songs are kept in the history after a reload", async ({ page }) => {
   const tab = await page.locator("#tab-view").innerText();
   expect(tab).toContain("E|0-------0---3---");
 });
+
+test("songs can be exported and imported back", async ({ page }) => {
+  const logs = collectLogs(page);
+  page.on("dialog", (dialog) => dialog.accept());
+  await transcribeRiff(page, logs);
+
+  const [download] = await Promise.all([page.waitForEvent("download"), page.locator("#export-history").click()]);
+  expect(download.suggestedFilename()).toMatch(/\.bltab$/);
+  const archivePath = await download.path();
+
+  // Clear the history, then restore it from the exported file.
+  await page.locator("#history-list button", { hasText: "Delete" }).first().click();
+  await expect(page.locator("#history-empty")).toBeVisible();
+  await page.locator("#import-history").setInputFiles(archivePath);
+  await expect(page.locator("#history-message")).toContainText("Imported 1 song");
+  await expect(page.locator("#history-list")).toContainText("riff.wav");
+
+  // Importing again finds the duplicate and replaces it (the dialog is accepted).
+  await page.locator("#history-message").evaluate((element) => (element.textContent = ""));
+  await page.locator("#import-history").setInputFiles(archivePath);
+  await expect(page.locator("#history-message")).toContainText("Imported 1 song.");
+  await expect(page.locator("#history-list li")).toHaveCount(1);
+
+  await page.reload();
+  await page.locator("#history-list button", { hasText: "Open" }).first().click();
+  await expect(page.locator("#result")).toBeVisible();
+  expect(await page.locator("#tab-view").innerText()).toContain("E|0-------0---3---");
+});

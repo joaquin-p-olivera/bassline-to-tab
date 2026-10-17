@@ -43,7 +43,7 @@ Features:
 | --- | --- | --- |
 | `crates/core` | Rust | Platform-agnostic transcription: Basic Pitch inference (ONNX via [tract](https://github.com/sonos/tract), model embedded), note decoding, onset refinement, tuning and tempo estimation, fret assignment, ASCII tab, MIDI. |
 | `crates/web` | Rust → wasm | `wasm-bindgen` bindings: `separate_bass` (HTDemucs via [demucs-rs](https://github.com/nikhilunni/demucs-rs) on WebGPU) and `transcribe`. |
-| `web/` | HTML/JS | The page (`index.html`, `app.js`), the worker (`worker.js`), the interactive tab (`tab-view.js`) and the song history (`storage.js`). |
+| `web/` | HTML/JS | The page (`index.html`, `app.js`), the worker (`worker.js`), the interactive tab (`tab-view.js`) the song history (`storage.js`) and its export/import file (`archive.js`). |
 | `scripts/build-web.sh` | Bash | Builds the wasm module and assembles the site. |
 | `.github/workflows/pages.yml` | CI | Builds the wasm, runs an end-to-end test in headless Chromium, deploys to GitHub Pages. |
 
