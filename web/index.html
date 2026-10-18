@@ -6,6 +6,7 @@
   <title>Bassline to Tab</title>
   <meta name="description" content="Turn a song into bass tablature, entirely in your browser.">
   <script src="https://cdn.tailwindcss.com/3.4.17"></script>
+  <script src="./theme.js"></script>
 </head>
 <body class="min-h-screen bg-stone-50 text-stone-900 dark:bg-stone-950 dark:text-stone-100">
   <main class="mx-auto max-w-3xl px-4 py-10">
@@ -17,6 +18,8 @@
             class="rounded-lg border border-stone-300 px-3 py-1.5 text-sm font-medium hover:border-amber-500 hover:bg-stone-100 dark:border-stone-700 dark:hover:bg-stone-800">Fretboard notes</a>
           <a id="tuner-link" href="./tuner.html"
             class="rounded-lg border border-stone-300 px-3 py-1.5 text-sm font-medium hover:border-amber-500 hover:bg-stone-100 dark:border-stone-700 dark:hover:bg-stone-800">Tune your bass</a>
+          <button type="button" data-theme-toggle
+            class="inline-flex items-center gap-1.5 rounded-lg border border-stone-300 px-3 py-1.5 text-sm font-medium hover:border-amber-500 hover:bg-stone-100 dark:border-stone-700 dark:hover:bg-stone-800">Theme</button>
         </nav>
       </div>
       <p class="mt-2 text-stone-600 dark:text-stone-400">
