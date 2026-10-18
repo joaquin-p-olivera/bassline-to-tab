@@ -4,7 +4,7 @@
 //
 // Record shape:
 //   { id, name, createdAt, duration, file: File, bassWav: Blob | null,
-//     separated: boolean, lastOptions, lastResult }
+//     separated: boolean, source?: "microphone", lastOptions, lastResult }
 
 const DB_NAME = "bassline-to-tab";
 const DB_VERSION = 1;
