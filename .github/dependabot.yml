@@ -1,0 +1,42 @@
+# Weekly dependency update PRs. Minor and patch bumps of each ecosystem come
+# grouped in one PR; major bumps (and 0.x minor bumps, which Cargo treats as
+# breaking) come one per PR so they can be reviewed on their own.
+version: 2
+updates:
+  # Rust workspace: one Cargo.lock at the root covers crates/core and crates/web.
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      rust-minor-patch:
+        update-types: [minor, patch]
+    ignore:
+      # The wasm-bindgen crate must match the wasm-bindgen-cli pinned in
+      # .github/workflows/web.yml (WASM_BINDGEN_VERSION), and js-sys,
+      # web-sys and wasm-bindgen-futures are released in lockstep with it.
+      # Bump them by hand together with the CLI version.
+      - dependency-name: wasm-bindgen
+      - dependency-name: wasm-bindgen-*
+      - dependency-name: js-sys
+      - dependency-name: web-sys
+      # demucs-core is a git dependency pinned to a commit, and burn has to
+      # stay on the version demucs-core is built against. Update both by hand.
+      - dependency-name: demucs-core
+      - dependency-name: burn
+      - dependency-name: burn-*
+
+  # Playwright for the end-to-end tests (the site itself has no npm packages).
+  - package-ecosystem: npm
+    directory: /web/e2e
+    schedule:
+      interval: weekly
+
+  # Actions used by the workflows.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions-minor-patch:
+        update-types: [minor, patch]
