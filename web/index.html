@@ -122,7 +122,13 @@
 
       <div>
         <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
-          <h2 class="text-xl font-semibold">Tablature</h2>
+          <div class="flex flex-wrap items-center gap-3">
+            <h2 class="text-xl font-semibold">Tablature</h2>
+            <div id="fingering-toggle" class="inline-flex overflow-hidden rounded-lg border border-stone-300 text-sm dark:border-stone-700" role="group" aria-label="Fingering">
+              <button type="button" data-fingering="open-position" class="fingering-button px-3 py-1" title="Low frets and open strings">Open position</button>
+              <button type="button" data-fingering="lower-strings" class="fingering-button border-l border-stone-300 px-3 py-1 dark:border-stone-700" title="E and A strings, higher up the neck">Lower strings</button>
+            </div>
+          </div>
           <div class="flex flex-wrap gap-2 text-sm">
             <button id="copy" type="button" class="rounded-lg border border-stone-300 px-3 py-1.5 hover:bg-stone-100 dark:border-stone-700 dark:hover:bg-stone-800">Copy</button>
             <button id="download-tab" type="button" class="rounded-lg border border-stone-300 px-3 py-1.5 hover:bg-stone-100 dark:border-stone-700 dark:hover:bg-stone-800">Download .txt</button>

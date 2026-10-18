@@ -13,7 +13,7 @@ use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use bassline_core::model::{BasicPitch, SAMPLE_RATE};
-use bassline_core::pipeline::{self, Options, Transcription};
+use bassline_core::pipeline::{self, Fingering, Options, Transcription};
 use bassline_core::tab;
 use bassline_core::tuning::{pitch_name, Tuning};
 use burn::backend::wgpu::graphics::WebGpu;
@@ -109,8 +109,6 @@ struct JsNote {
     name: String,
     pitch: u8,
     played_pitch: u8,
-    string: Option<String>,
-    fret: Option<u8>,
     amplitude: f32,
 }
 
@@ -124,11 +122,32 @@ struct JsTabEvent {
     fret: u8,
 }
 
+/// The tab in one fingering style.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct JsFingering {
+    /// `"open-position"` or `"lower-strings"`.
+    style: &'static str,
+    tab: String,
+    events: Vec<JsTabEvent>,
+}
+
+impl From<Fingering> for JsFingering {
+    fn from(fingering: Fingering) -> Self {
+        let events = fingering
+            .events
+            .iter()
+            .map(|e| JsTabEvent { step: e.step, string: e.position.string, fret: e.position.fret })
+            .collect();
+        Self { style: fingering.style.as_spec(), tab: fingering.tab, events }
+    }
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct JsTranscription {
-    tab: String,
-    events: Vec<JsTabEvent>,
+    /// One per fingering style, the default (open position) first.
+    fingerings: Vec<JsFingering>,
     /// Open-string labels, lowest string first.
     string_labels: Vec<String>,
     steps_per_bar: usize,
@@ -157,19 +176,11 @@ fn to_js_transcription(result: Transcription, tuning: &Tuning) -> JsTranscriptio
             name: pitch_name(n.played_pitch),
             pitch: n.note.pitch,
             played_pitch: n.played_pitch,
-            string: n.position.map(|p| tuning.label(p.string)),
-            fret: n.position.map(|p| p.fret),
             amplitude: n.note.amplitude,
         })
         .collect();
-    let events = result
-        .events
-        .iter()
-        .map(|e| JsTabEvent { step: e.step, string: e.position.string, fret: e.position.fret })
-        .collect();
     JsTranscription {
-        tab: result.tab,
-        events,
+        fingerings: result.fingerings.into_iter().map(JsFingering::from).collect(),
         string_labels: (0..tuning.strings().len()).map(|s| tuning.label(s)).collect(),
         steps_per_bar: tab::STEPS_PER_BAR,
         steps_per_beat: tab::STEPS_PER_BEAT,

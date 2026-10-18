@@ -19,6 +19,7 @@ const tabView = new TabView($("tab-view"));
 /// The song being worked on: a history record (see storage.js).
 let currentSong = null;
 let currentResult = null;
+let fingeringStyle = "open-position";
 let playerUrls = { bass: null, mix: null };
 
 // ─── Worker ─────────────────────────────────────────────────────────────────
@@ -292,13 +293,44 @@ function renderSummary(result) {
   show(warnings, result.warnings.length > 0);
 }
 
+/// The tab in the selected fingering style. Songs saved before styles existed
+/// only have one tab (open position) at the top level.
+function currentFingering() {
+  const fingerings = currentResult.fingerings ?? [
+    { style: "open-position", tab: currentResult.tab, events: currentResult.events },
+  ];
+  return fingerings.find((f) => f.style === fingeringStyle) ?? fingerings[0];
+}
+
+function renderFingering() {
+  const available = new Set((currentResult.fingerings ?? [{ style: "open-position" }]).map((f) => f.style));
+  const shown = currentFingering().style;
+  for (const button of document.querySelectorAll(".fingering-button")) {
+    const style = button.dataset.fingering;
+    button.disabled = !available.has(style);
+    button.title = button.disabled ? "Transcribe this song again to get this fingering" : button.dataset.hint;
+    button.classList.toggle("opacity-40", button.disabled);
+    button.classList.toggle("bg-amber-600", style === shown);
+    button.classList.toggle("text-white", style === shown);
+  }
+  tabView.setTranscription({ ...currentResult, ...currentFingering() });
+  tabView.setTime(player.currentTime || 0);
+}
+
+document.querySelectorAll(".fingering-button").forEach((button) => {
+  button.dataset.hint = button.title;
+  button.addEventListener("click", () => {
+    fingeringStyle = button.dataset.fingering;
+    if (currentResult) renderFingering();
+  });
+});
+
 function showResult(song, result, timings = []) {
   currentResult = result;
   renderSummary(result);
   show($("result"), true);
   setPlayerSources(song);
-  tabView.setTranscription(result);
-  tabView.setTime(player.currentTime || 0);
+  renderFingering();
   $("timings").textContent = timings.map(([label, value]) => `${label}: ${value}`).join(" · ");
 }
 
@@ -503,14 +535,16 @@ $("onset-threshold").addEventListener("input", () => {
 
 $("copy").addEventListener("click", async () => {
   if (!currentResult) return;
-  await navigator.clipboard.writeText(currentResult.tab);
+  await navigator.clipboard.writeText(currentFingering().tab);
   $("copy").textContent = "Copied";
   setTimeout(() => ($("copy").textContent = "Copy"), 1500);
 });
 
 $("download-tab").addEventListener("click", () => {
   if (currentResult) {
-    download(`${baseName(currentSong?.name ?? "bassline")}.tab.txt`, new Blob([currentResult.tab], { type: "text/plain" }));
+    const { style, tab } = currentFingering();
+    const suffix = style === "open-position" ? "" : `.${style}`;
+    download(`${baseName(currentSong?.name ?? "bassline")}${suffix}.tab.txt`, new Blob([tab], { type: "text/plain" }));
   }
 });
 

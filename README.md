@@ -73,9 +73,11 @@ Without WebGPU the app still transcribes an **isolated** bass recording
   aligned to the first strong note rather than the real downbeat.
 - **Notes, not technique**: slides, hammer-ons, ghost notes and slap are not
   detected.
-- **Fingering** favours low frets and open position, so a note the bassist
-  plays on the E string at the 12th fret may appear on the D string at the
-  2nd (same pitch, different sound). See [#1](https://github.com/joaquin-p-olivera/bassline-to-tab/issues/1).
+- **Fingering** is a guess: the string is not detected from the sound. Every
+  transcription comes in two fingerings, open position (low frets, open
+  strings) and lower strings (E/A higher up the neck), and a toggle above the
+  tab switches between them. A line that mixes both may still land on the
+  wrong string.
 - **Note detection** was tuned on a single real recording (about 82% of notes
   at the exact pitch); other songs and mixes may need retuning. Some notes
   still come out an octave too high.
@@ -85,7 +87,7 @@ Without WebGPU the app still transcribes an **isolated** bass recording
 ## Roadmap
 
 1. Faster separation ([#2](https://github.com/joaquin-p-olivera/bassline-to-tab/issues/2)).
-2. Fingering style option: open position vs lower strings ([#1](https://github.com/joaquin-p-olivera/bassline-to-tab/issues/1)), then manual editing.
+2. Manual tab editing ([#4](https://github.com/joaquin-p-olivera/bassline-to-tab/issues/4)).
 3. Validate and retune note detection on more recordings.
 4. Note durations and rests in the tab; MusicXML / Guitar Pro export.
 5. Downbeat detection and smarter quantization (triplets, swing).
