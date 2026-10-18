@@ -12,7 +12,7 @@
   </style>
 </head>
 <body class="min-h-screen bg-stone-50 text-stone-900 dark:bg-stone-950 dark:text-stone-100">
-  <main class="mx-auto max-w-3xl px-4 py-10">
+  <main class="mx-auto max-w-3xl px-4 py-10 lg:max-w-6xl">
     <header class="mb-8">
       <a href="./" class="text-sm text-stone-500 underline hover:text-stone-700 dark:hover:text-stone-300">← Bassline to Tab</a>
       <h1 class="mt-2 text-3xl font-bold tracking-tight">Bass amp</h1>
@@ -72,23 +72,23 @@
       </div>
     </section>
 
-    <section class="mt-6 space-y-4 rounded-xl border border-stone-200 bg-white p-6 shadow-sm dark:border-stone-800 dark:bg-stone-900">
-      <div class="flex items-center justify-between gap-3">
-        <h2 class="text-lg font-semibold">Amp</h2>
-        <button id="reset" type="button" class="text-sm text-stone-500 underline hover:text-stone-700 dark:hover:text-stone-300">
-          Reset all controls
-        </button>
-      </div>
-      <p class="text-sm text-stone-500">Drag a knob up or down to turn it; double-click to reset it.</p>
-      <div data-controls="amp" class="flex flex-wrap justify-center gap-x-6 gap-y-4 rounded-xl bg-stone-100 px-2 py-4 dark:bg-stone-950"></div>
-      <canvas id="eq-graph" class="graph h-48" aria-label="EQ curve over the sound's spectrum"></canvas>
-      <p class="text-xs text-stone-500">
-        <span class="font-semibold text-amber-600">Line</span>: how the EQ boosts or cuts each frequency.
-        <span class="font-semibold text-stone-400">Shaded</span>: the spectrum of what is playing, after every effect.
-      </p>
-    </section>
+    <div class="mt-6 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+      <section class="space-y-4 rounded-xl sm:col-span-2 lg:col-span-1 border border-stone-200 bg-white p-6 shadow-sm dark:border-stone-800 dark:bg-stone-900">
+        <div class="flex items-center justify-between gap-3">
+          <h2 class="text-lg font-semibold">Amp</h2>
+          <button id="reset" type="button" class="text-sm text-stone-500 underline hover:text-stone-700 dark:hover:text-stone-300">
+            Reset all controls
+          </button>
+        </div>
+        <p class="text-sm text-stone-500">Drag a knob up or down to turn it; double-click to reset it.</p>
+        <div data-controls="amp" class="flex flex-wrap justify-center gap-x-6 gap-y-4 rounded-xl bg-stone-100 px-2 py-4 dark:bg-stone-950"></div>
+        <canvas id="eq-graph" class="graph h-48" aria-label="EQ curve over the sound's spectrum"></canvas>
+        <p class="text-xs text-stone-500">
+          <span class="font-semibold text-amber-600">Line</span>: how the EQ boosts or cuts each frequency.
+          <span class="font-semibold text-stone-400">Shaded</span>: the spectrum of what is playing, after every effect.
+        </p>
+      </section>
 
-    <div class="mt-6 grid gap-6 sm:grid-cols-2">
       <section class="space-y-4 rounded-xl border border-stone-200 bg-white p-6 shadow-sm dark:border-stone-800 dark:bg-stone-900">
         <div class="flex items-center justify-between gap-3">
           <h2 class="text-lg font-semibold">Compressor</h2>
