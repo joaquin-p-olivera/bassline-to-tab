@@ -736,10 +736,9 @@ function syncControls() {
 
 // ─── Graphs ─────────────────────────────────────────────────────────────────
 
-const darkMode = window.matchMedia("(prefers-color-scheme: dark)");
-
 function palette() {
-  const dark = darkMode.matches;
+  // theme.js sets the `dark` class on <html> (the toggle or the system setting).
+  const dark = document.documentElement.classList.contains("dark");
   return {
     grid: dark ? "#292524" : "#e7e5e4",
     axis: dark ? "#57534e" : "#a8a29e",
@@ -997,7 +996,7 @@ function redrawAll() {
 }
 
 window.addEventListener("resize", redrawAll);
-darkMode.addEventListener("change", redrawAll);
+new MutationObserver(redrawAll).observe(document.documentElement, { attributes: true, attributeFilter: ["class"] });
 
 syncControls();
 drawStatic();
