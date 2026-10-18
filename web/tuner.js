@@ -1,7 +1,8 @@
 // Bass tuner page: reference notes played with Web Audio, and pitch detection
-// from the microphone (see pitch.js).
+// from the microphone (see pitch.js), either against the strings of the chosen
+// tuning or against any note.
 
-import { STANDARD_STRINGS, detectPitch, frameLength, nearestString } from "./pitch.js";
+import { TUNINGS, detectPitch, frameLength, nearestNote, nearestString } from "./pitch.js";
 
 /// Within this many cents the string counts as in tune.
 const IN_TUNE_CENTS = 5;
@@ -18,6 +19,8 @@ const REFERENCE_SECONDS = 4;
 /// strings (41 Hz for E) is below what phone and laptop speakers can play, so
 /// the upper harmonics carry the pitch there, as they do on a real bass.
 const REFERENCE_HARMONICS = [0, 1, 0.8, 0.55, 0.4, 0.3, 0.2, 0.14, 0.1];
+const TUNING_KEY = "tuner.tuning";
+const MODE_KEY = "tuner.mode";
 
 const $ = (id) => document.getElementById(id);
 
@@ -31,6 +34,8 @@ function show(element, visible) {
 for (const element of document.querySelectorAll(".hidden")) element.hidden = true;
 
 let audioContext = null;
+/// The open microphone, while listening.
+let listening = null;
 
 function context() {
   audioContext ??= new AudioContext();
@@ -39,28 +44,69 @@ function context() {
   return audioContext;
 }
 
-// ─── Reference notes ────────────────────────────────────────────────────────
-
-const stringButtons = new Map();
-let reference = null;
-
-for (const string of STANDARD_STRINGS) {
-  const button = document.createElement("button");
-  button.type = "button";
-  button.dataset.string = string.name;
-  button.setAttribute("aria-pressed", "false");
-  button.title = `Play ${string.note} (${string.frequency.toFixed(1)} Hz)`;
-  button.className =
-    "string-button rounded-lg border border-stone-300 px-2 py-4 transition hover:border-amber-500 dark:border-stone-700";
-  button.innerHTML = `<span class="block text-3xl font-bold">${string.name}</span>
-    <span class="block font-mono text-xs text-stone-500">${string.note}</span>
-    <span class="block whitespace-nowrap font-mono text-xs text-stone-500">${string.frequency.toFixed(1)} Hz</span>`;
-  button.addEventListener("click", () => playReference(string));
-  $("strings").append(button);
-  stringButtons.set(string.name, button);
+/// Remembered choices are a convenience: storage may be blocked or missing.
+function remembered(key) {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
 }
 
-function playReference(string) {
+function remember(key, value) {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // Not remembered; the page works the same.
+  }
+}
+
+// ─── Tuning ─────────────────────────────────────────────────────────────────
+
+let tuning = TUNINGS.find((t) => t.id === remembered(TUNING_KEY)) ?? TUNINGS[0];
+
+for (const option of TUNINGS) {
+  $("tuning").append(new Option(option.label, option.id, false, option === tuning));
+}
+
+$("tuning").addEventListener("change", (event) => {
+  tuning = TUNINGS.find((t) => t.id === event.target.value) ?? TUNINGS[0];
+  remember(TUNING_KEY, tuning.id);
+  stopReference();
+  renderStrings();
+  resetReadings();
+});
+
+// ─── Reference notes ────────────────────────────────────────────────────────
+
+/// Buttons by string index (a tuning such as Drop D has two strings named D).
+let stringButtons = [];
+let reference = null;
+
+function renderStrings() {
+  const container = $("strings");
+  container.replaceChildren();
+  container.style.gridTemplateColumns = `repeat(${tuning.strings.length}, minmax(0, 1fr))`;
+  const compact = tuning.strings.length > 4;
+  stringButtons = tuning.strings.map((string, index) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.dataset.string = string.name;
+    button.setAttribute("aria-pressed", "false");
+    button.title = `Play ${string.note} (${string.frequency.toFixed(1)} Hz)`;
+    button.className = `string-button rounded-lg border border-stone-300 ${compact ? "px-1" : "px-2"} py-4 transition hover:border-amber-500 dark:border-stone-700`;
+    button.innerHTML = `<span class="block ${compact ? "text-2xl" : "text-3xl"} font-bold">${string.name}</span>
+      <span class="block font-mono text-xs text-stone-500">${string.note}</span>
+      <span class="block whitespace-nowrap font-mono text-xs text-stone-500">${string.frequency.toFixed(compact ? 0 : 1)} Hz</span>`;
+    button.addEventListener("click", () => playReference(string, index));
+    container.append(button);
+    return button;
+  });
+}
+
+renderStrings();
+
+function playReference(string, index) {
   const ctx = context();
   stopReference();
   const real = new Float32Array(REFERENCE_HARMONICS.length);
@@ -75,11 +121,11 @@ function playReference(string) {
   oscillator.start(now);
   oscillator.stop(now + REFERENCE_SECONDS);
   reference = { oscillator, gain, string };
-  setPlaying(string.name);
+  setPlaying(index);
   oscillator.onended = () => {
     if (reference?.oscillator === oscillator) {
       reference = null;
-      setPlaying(null);
+      setPlaying(-1);
     }
   };
 }
@@ -92,20 +138,51 @@ function stopReference() {
   gain.gain.setTargetAtTime(0, now, 0.01);
   oscillator.stop(now + 0.05);
   reference = null;
+  setPlaying(-1);
 }
 
-function setPlaying(name) {
-  for (const [stringName, button] of stringButtons) {
-    const playing = stringName === name;
+function setPlaying(playingIndex) {
+  for (const [index, button] of stringButtons.entries()) {
+    const playing = index === playingIndex;
     button.setAttribute("aria-pressed", String(playing));
     button.classList.toggle("bg-amber-100", playing);
     button.classList.toggle("dark:bg-amber-950", playing);
   }
 }
 
-// ─── Microphone ─────────────────────────────────────────────────────────────
+// ─── Mode ───────────────────────────────────────────────────────────────────
 
-let listening = null;
+/// "tune": compare with the open strings of the tuning. "note": name whatever
+/// note is playing, fretted or open.
+let mode = remembered(MODE_KEY) === "note" ? "note" : "tune";
+
+const MODE_HELP = {
+  tune: "Play one open string at a time and let it ring.",
+  note: "Play any note, open or fretted, and see which one it is.",
+};
+
+for (const button of document.querySelectorAll(".mode-button")) {
+  button.addEventListener("click", () => setMode(button.dataset.mode));
+}
+
+function setMode(next) {
+  mode = next;
+  remember(MODE_KEY, mode);
+  for (const button of document.querySelectorAll(".mode-button")) {
+    const selected = button.dataset.mode === mode;
+    button.setAttribute("aria-checked", String(selected));
+    button.classList.toggle("bg-amber-600", selected);
+    button.classList.toggle("text-white", selected);
+    button.classList.toggle("text-stone-600", !selected);
+    button.classList.toggle("dark:text-stone-300", !selected);
+  }
+  $("mode-help").textContent = MODE_HELP[mode];
+  resetReadings();
+}
+
+setMode(mode);
+
+// ─── Microphone ─────────────────────────────────────────────────────────────
 
 $("listen").addEventListener("click", () => (listening ? stopListening() : startListening()));
 
@@ -139,6 +216,10 @@ async function startListening() {
   const samples = new Float32Array(analyser.fftSize);
   const readings = [];
   let lastHeard = 0;
+  const reset = () => {
+    readings.length = 0;
+    showReading(null);
+  };
   const tick = () => {
     if (!listening) return;
     analyser.getFloatTimeDomainData(samples);
@@ -158,7 +239,7 @@ async function startListening() {
     listening.frame = requestAnimationFrame(tick);
   };
 
-  listening = { stream, source, frame: 0 };
+  listening = { stream, source, frame: 0, reset };
   $("listen").textContent = "Stop listening";
   show($("meter"), true);
   showReading(null);
@@ -172,7 +253,12 @@ function stopListening() {
   listening = null;
   $("listen").textContent = "Start listening";
   show($("meter"), false);
-  highlightDetected(null);
+  highlightDetected(-1);
+}
+
+/// Drops the current reading, after the tuning or the mode changes.
+function resetReadings() {
+  if (listening) listening.reset();
 }
 
 function medianOf(values) {
@@ -184,30 +270,48 @@ function showReading(frequency) {
   const needle = $("needle");
   if (frequency === null) {
     $("detected-string").textContent = "–";
+    $("detected-octave").textContent = "";
     $("cents").textContent = "";
-    $("advice").textContent = "Play a string";
+    $("advice").textContent = mode === "note" ? "Play a note" : "Play a string";
     $("frequency").textContent = "";
     needle.style.left = "50%";
     setNeedleColor("bg-stone-400");
-    highlightDetected(null);
+    highlightDetected(-1);
     return;
   }
-  const { string, cents } = nearestString(frequency);
+  let cents;
+  let inTune;
+  if (mode === "note") {
+    const note = nearestNote(frequency);
+    cents = note.cents;
+    inTune = Math.abs(cents) <= IN_TUNE_CENTS;
+    $("detected-string").textContent = note.name;
+    $("detected-octave").textContent = String(note.octave);
+    $("advice").textContent = inTune ? "Right on the note" : cents < 0 ? "A little flat" : "A little sharp";
+    $("frequency").textContent =
+      `${frequency.toFixed(1)} Hz · ${note.name}${note.octave} is ${note.frequency.toFixed(1)} Hz`;
+    highlightDetected(-1);
+  } else {
+    const nearest = nearestString(frequency, tuning.strings);
+    const { string } = nearest;
+    cents = nearest.cents;
+    inTune = Math.abs(cents) <= IN_TUNE_CENTS;
+    $("detected-string").textContent = string.name;
+    $("detected-octave").textContent = "";
+    $("advice").textContent = inTune
+      ? "In tune"
+      : cents < 0
+        ? "Too low: tighten the string (tune up)"
+        : "Too high: loosen the string (tune down)";
+    $("frequency").textContent = `${frequency.toFixed(1)} Hz · target ${string.note} ${string.frequency.toFixed(1)} Hz`;
+    highlightDetected(tuning.strings.indexOf(string));
+  }
   const rounded = Math.round(cents);
-  const inTune = Math.abs(cents) <= IN_TUNE_CENTS;
-  $("detected-string").textContent = string.name;
   $("cents").textContent = `${rounded > 0 ? "+" : rounded < 0 ? "−" : "±"}${Math.abs(rounded)} ¢`;
-  $("advice").textContent = inTune
-    ? "In tune"
-    : cents < 0
-      ? "Too low: tighten the string (tune up)"
-      : "Too high: loosen the string (tune down)";
-  $("frequency").textContent = `${frequency.toFixed(1)} Hz · target ${string.note} ${string.frequency.toFixed(1)} Hz`;
   const clamped = Math.max(-METER_RANGE_CENTS, Math.min(METER_RANGE_CENTS, cents));
   needle.style.left = `${50 + (clamped / METER_RANGE_CENTS) * 50}%`;
   setNeedleColor(inTune ? "bg-green-600" : "bg-amber-600");
   $("meter").dataset.cents = cents.toFixed(1);
-  highlightDetected(string.name);
 }
 
 function setNeedleColor(color) {
@@ -216,9 +320,9 @@ function setNeedleColor(color) {
   needle.classList.add(color);
 }
 
-function highlightDetected(name) {
-  for (const [stringName, button] of stringButtons) {
-    const detected = stringName === name;
+function highlightDetected(detectedIndex) {
+  for (const [index, button] of stringButtons.entries()) {
+    const detected = index === detectedIndex;
     button.classList.toggle("border-amber-500", detected);
     button.classList.toggle("ring-2", detected);
     button.classList.toggle("ring-amber-500", detected);
