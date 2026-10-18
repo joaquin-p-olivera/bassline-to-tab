@@ -2,10 +2,8 @@
 // plays. Tapping a fret plays it; optionally every fret with the same note is
 // highlighted.
 
-import { STANDARD_STRINGS, midiToFrequency } from "./pitch.js";
+import { STANDARD_STRINGS, midiToFrequency, noteName } from "./pitch.js";
 
-const SHARP_NAMES = ["C", "C♯", "D", "D♯", "E", "F", "F♯", "G", "G♯", "A", "A♯", "B"];
-const FLAT_NAMES = ["C", "D♭", "D", "E♭", "E", "F", "G♭", "G", "A♭", "A", "B♭", "B"];
 /// Inlay dots, as on a real bass; the octave frets get two.
 const SINGLE_DOTS = new Set([3, 5, 7, 9, 15, 17, 19, 21]);
 const DOUBLE_DOTS = new Set([12, 24]);
@@ -20,7 +18,7 @@ const $ = (id) => document.getElementById(id);
 
 const settings = {
   frets: 12,
-  names: SHARP_NAMES,
+  flats: false,
   showOctave: false,
   highlight: false,
 };
@@ -32,7 +30,7 @@ $("fret-count").addEventListener("change", (event) => {
   render();
 });
 $("notation").addEventListener("change", (event) => {
-  settings.names = event.target.value === "flats" ? FLAT_NAMES : SHARP_NAMES;
+  settings.flats = event.target.value === "flats";
   render();
 });
 $("show-octave").addEventListener("change", (event) => {
@@ -44,14 +42,6 @@ $("highlight").addEventListener("change", (event) => {
   if (!settings.highlight) selected = null;
   render();
 });
-
-function noteName(midi) {
-  return settings.names[midi % 12];
-}
-
-function octave(midi) {
-  return Math.floor(midi / 12) - 1;
-}
 
 function render() {
   const neck = $("neck");
@@ -102,12 +92,12 @@ function fretCell(string, fret) {
     button.classList.add("border-stone-300", "bg-white", "hover:border-amber-500", "dark:border-stone-600", "dark:bg-stone-900");
   }
   button.setAttribute("aria-pressed", String(highlighted));
-  const name = noteName(midi);
+  const { name, octave } = noteName(midi, settings.flats);
   const fretText = fret === 0 ? "open" : `fret ${fret}`;
-  button.title = `${string.name} string, ${fretText}: ${name}${octave(midi)} (${midiToFrequency(midi).toFixed(1)} Hz)`;
+  button.title = `${string.name} string, ${fretText}: ${name}${octave} (${midiToFrequency(midi).toFixed(1)} Hz)`;
   button.setAttribute("aria-label", button.title);
   button.innerHTML = settings.showOctave
-    ? `${name}<sub class="text-[0.65rem] font-normal opacity-70">${octave(midi)}</sub>`
+    ? `${name}<sub class="text-[0.65rem] font-normal opacity-70">${octave}</sub>`
     : name;
   button.addEventListener("click", () => tap(midi));
   cell.append(button);
@@ -132,7 +122,7 @@ function showSelection() {
     return;
   }
   const count = $("neck").querySelectorAll('[aria-pressed="true"]').length;
-  box.textContent = `${settings.names[selected]}: ${count} places on the neck. Tap it again to clear.`;
+  box.textContent = `${noteName(selected, settings.flats).name}: ${count} places on the neck. Tap it again to clear.`;
 }
 
 // ─── Sound ──────────────────────────────────────────────────────────────────
