@@ -1,7 +1,8 @@
 # bassline-to-tab
 
-Choose a song, get its bass line as tablature. It runs entirely in the
-browser, on your own device: no server, no uploads, no install.
+Choose a song, or record yourself playing, and get the bass line as
+tablature. It runs entirely in the browser, on your own device: no server,
+no uploads, no install.
 
 **App:** https://joaquin-p-olivera.github.io/bassline-to-tab/
 
@@ -21,6 +22,10 @@ song file ─► decode (Web Audio API)
           ─► Basic Pitch: note/onset activations ............ WebAssembly (CPU)
           ─► notes ─► tuning + tempo ─► fret positions ─► tab + MIDI
 ```
+
+You can also **record your own bass** with the microphone ("Or record your
+bass" under the file picker). The recording skips separation, goes straight
+to Basic Pitch and is saved in your songs like any file.
 
 Everything heavy runs in a Web Worker so the page stays responsive.
 Two pre-trained neural networks do the listening (HTDemucs separates the
@@ -43,7 +48,7 @@ Features:
 | --- | --- | --- |
 | `crates/core` | Rust | Platform-agnostic transcription: Basic Pitch inference (ONNX via [tract](https://github.com/sonos/tract), model embedded), note decoding, onset refinement, tuning and tempo estimation, fret assignment, ASCII tab, MIDI. |
 | `crates/web` | Rust → wasm | `wasm-bindgen` bindings: `separate_bass` (HTDemucs via [demucs-rs](https://github.com/nikhilunni/demucs-rs) on WebGPU) and `transcribe`. |
-| `web/` | HTML/JS | The page (`index.html`, `app.js`), the worker (`worker.js`), the interactive tab (`tab-view.js`), the song history (`storage.js`) and its export/import file (`archive.js`), and the fretboard page with every fret's note (`fretboard.html`, `fretboard.js`). |
+| `web/` | HTML/JS | The page (`index.html`, `app.js`), the worker (`worker.js`), the interactive tab (`tab-view.js`), the microphone recorder (`recorder-worklet.js`), the song history (`storage.js`) and its export/import file (`archive.js`), and the fretboard page with every fret's note (`fretboard.html`, `fretboard.js`). |
 | `scripts/build-web.sh` | Bash | Builds the wasm module and assembles the site. |
 | `.github/workflows/web.yml` | CI | On every push: builds the wasm (with clippy) and runs the end-to-end tests in headless Chromium. |
 | `.github/workflows/deploy.yml` | CI | Manual only (Actions → Deploy to GitHub Pages → Run workflow): builds and tests a branch, then deploys it to GitHub Pages. Branches other than `main` need `confirm_non_main: yes`. |
@@ -133,7 +138,7 @@ Separation needs **WebGPU**. Check your device at https://webgpureport.org.
 - **Android**: recent Chrome on most devices, depending on the GPU.
 
 Without WebGPU the app still transcribes an **isolated** bass recording
-(turn off "Separate the bass").
+(turn off "Separate the bass"), including one recorded with the microphone.
 
 ## Limitations
 
@@ -154,6 +159,11 @@ Without WebGPU the app still transcribes an **isolated** bass recording
 - **Note detection** was tuned on a single real recording (about 82% of notes
   at the exact pitch); other songs and mixes may need retuning. Some notes
   still come out an octave too high.
+- **Microphone recordings**: laptop and phone microphones pick up little
+  below ~80 Hz, so the low E and A strings come through mostly as harmonics
+  and may land an octave too high. Play close to the microphone, or plug the
+  bass into an audio interface. The recording is transcribed after you stop,
+  not live.
 - **Recordings far from A440** (±30 cents or more) can put notes on the
   neighbouring semitone; the app warns when it sees this.
 
