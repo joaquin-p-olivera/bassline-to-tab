@@ -20,8 +20,8 @@ const GRAPH_MIN_HZ = 20;
 const GRAPH_MAX_HZ = 16000;
 const GRAPH_DB = 18;
 
-/// Sliders, grouped by the panel that holds them. `log` sliders move
-/// evenly in octaves rather than in hertz.
+/// Knobs, grouped by the panel that holds them. `log` knobs turn evenly in
+/// octaves rather than in hertz.
 const CONTROLS = {
   comp: [
     { key: "compThreshold", label: "Threshold", min: -50, max: 0, step: 1, unit: "dB", value: -24 },
@@ -33,15 +33,15 @@ const CONTROLS = {
   drive: [
     { key: "driveAmount", label: "Drive", min: 0, max: 100, step: 1, unit: "%", value: 40 },
     { key: "driveTone", label: "Tone", min: 300, max: 8000, log: true, unit: "Hz", value: 2500 },
-    { key: "driveBlend", label: "Blend (clean ↔ driven)", min: 0, max: 100, step: 1, unit: "%", value: 60 },
+    { key: "driveBlend", label: "Blend", hint: "Mix of clean (left) and driven (right) sound", min: 0, max: 100, step: 1, unit: "%", value: 60 },
     { key: "driveLevel", label: "Level", min: -18, max: 12, step: 0.5, unit: "dB", value: 0 },
   ],
   amp: [
-    { key: "bass", label: `Bass (${BASS_HZ} Hz)`, min: -15, max: 15, step: 0.5, unit: "dB", value: 0 },
-    { key: "treble", label: `Treble (${TREBLE_HZ / 1000} kHz)`, min: -15, max: 15, step: 0.5, unit: "dB", value: 0 },
+    { key: "bass", label: "Bass", hint: `Shelf at ${BASS_HZ} Hz`, min: -15, max: 15, step: 0.5, unit: "dB", value: 0 },
     { key: "mid", label: "Middle", min: -15, max: 15, step: 0.5, unit: "dB", value: 0 },
-    { key: "midFreq", label: "Middle frequency", min: 200, max: 2500, log: true, unit: "Hz", value: 500 },
-    { key: "master", label: "Master volume", min: -30, max: 6, step: 0.5, unit: "dB", value: 0 },
+    { key: "midFreq", label: "Mid freq", hint: "Where the Middle knob boosts or cuts", min: 200, max: 2500, log: true, unit: "Hz", value: 500 },
+    { key: "treble", label: "Treble", hint: `Shelf at ${TREBLE_HZ / 1000} kHz`, min: -15, max: 15, step: 0.5, unit: "dB", value: 0 },
+    { key: "master", label: "Master", min: -30, max: 6, step: 0.5, unit: "dB", value: 0 },
   ],
 };
 const ALL_CONTROLS = Object.values(CONTROLS).flat();
@@ -51,7 +51,6 @@ const DEFAULTS = {
   driveOn: true,
   driveType: "overdrive",
 };
-const LOG_STEPS = 1000;
 
 /// Clipping curves, each mapping [-1, 1] onto [-1, 1] before normalizing.
 /// `gain` grows with the Drive control.
@@ -535,46 +534,162 @@ function formatValue(control, value) {
   return `${value} ${control.unit}`;
 }
 
-const toSlider = (c, value) =>
-  c.log ? Math.round((Math.log(value / c.min) / Math.log(c.max / c.min)) * LOG_STEPS) : value;
-const fromSlider = (c, position) => (c.log ? Math.round(c.min * (c.max / c.min) ** (position / LOG_STEPS)) : position);
+/// Knob position in [0, 1] for a value, and back. `log` controls turn evenly
+/// in octaves; the others snap to their step.
+function positionOf(c, value) {
+  const p = c.log ? Math.log(value / c.min) / Math.log(c.max / c.min) : (value - c.min) / (c.max - c.min);
+  return Math.max(0, Math.min(1, p));
+}
 
-const sliders = new Map();
+function valueAt(c, position) {
+  const p = Math.max(0, Math.min(1, position));
+  if (c.log) return Math.round(c.min * (c.max / c.min) ** p);
+  const value = c.min + Math.round((p * (c.max - c.min)) / c.step) * c.step;
+  return Number(value.toFixed(3));
+}
+
+/// The knob turns through 270°, from 7 to 5 o'clock.
+const KNOB_SWEEP = 270;
+const KNOB_RADIUS = 26;
+/// Dragging this many pixels turns the knob from end to end (Shift: 4× finer).
+const KNOB_DRAG_PX = 200;
+const SVG_NS = "http://www.w3.org/2000/svg";
+
+function knobPoint(angle, radius) {
+  const radians = ((angle - 90) * Math.PI) / 180;
+  return [32 + radius * Math.cos(radians), 32 + radius * Math.sin(radians)];
+}
+
+function arcPath(from, to, radius) {
+  const [x1, y1] = knobPoint(from, radius);
+  const [x2, y2] = knobPoint(to, radius);
+  const large = Math.abs(to - from) > 180 ? 1 : 0;
+  const sweep = to > from ? 1 : 0;
+  return `M ${x1} ${y1} A ${radius} ${radius} 0 ${large} ${sweep} ${x2} ${y2}`;
+}
+
+function svgElement(name, attributes) {
+  const element = document.createElementNS(SVG_NS, name);
+  for (const [key, value] of Object.entries(attributes)) element.setAttribute(key, value);
+  return element;
+}
+
+const knobs = new Map();
+
+/// A rotary knob like an amp's: drag up or down (or use the arrow keys) to
+/// turn it, double-click to put it back to its default. Controls that cut and
+/// boost (−/+ dB) light up from 12 o'clock; the rest from the start.
+function createKnob(control) {
+  const start = -KNOB_SWEEP / 2;
+  const centered = control.unit === "dB" && control.min < 0 && control.max > 0;
+  const origin = centered ? start + positionOf(control, 0) * KNOB_SWEEP : start;
+
+  const wrapper = document.createElement("div");
+  wrapper.className = "flex w-20 flex-col items-center text-center";
+  const name = document.createElement("span");
+  name.className = "text-sm font-medium";
+  name.textContent = control.label;
+  name.id = `knob-${control.key}-label`;
+
+  const knob = document.createElement("div");
+  knob.className = "mt-1 cursor-ns-resize touch-none rounded-full outline-none focus-visible:ring-2 focus-visible:ring-amber-500";
+  knob.tabIndex = 0;
+  knob.setAttribute("role", "slider");
+  knob.setAttribute("aria-labelledby", name.id);
+  knob.setAttribute("aria-valuemin", control.min);
+  knob.setAttribute("aria-valuemax", control.max);
+  if (control.hint) knob.title = control.hint;
+
+  const svg = svgElement("svg", { viewBox: "0 0 64 64", width: 64, height: 64, "aria-hidden": "true" });
+  const track = svgElement("path", {
+    d: arcPath(start, -start, KNOB_RADIUS + 4), fill: "none", "stroke-width": 3, "stroke-linecap": "round",
+    class: "stroke-stone-200 dark:stroke-stone-700",
+  });
+  const fill = svgElement("path", { fill: "none", "stroke-width": 3, "stroke-linecap": "round", stroke: "#d97706" });
+  const ticks = svgElement("g", { class: "stroke-stone-300 dark:stroke-stone-600", "stroke-width": 1 });
+  for (let i = 0; i <= 10; i++) {
+    const angle = start + (i / 10) * KNOB_SWEEP;
+    const [x1, y1] = knobPoint(angle, KNOB_RADIUS + 7);
+    const [x2, y2] = knobPoint(angle, KNOB_RADIUS + 9.5);
+    ticks.append(svgElement("line", { x1, y1, x2, y2 }));
+  }
+  const body = svgElement("circle", {
+    cx: 32, cy: 32, r: KNOB_RADIUS - 2, class: "fill-stone-800 stroke-stone-950 dark:fill-stone-700 dark:stroke-stone-900",
+    "stroke-width": 1.5,
+  });
+  const cap = svgElement("circle", { cx: 32, cy: 32, r: KNOB_RADIUS - 8, class: "fill-stone-700 dark:fill-stone-600" });
+  const pointer = svgElement("line", { x1: 32, y1: 32, x2: 32, y2: 10, stroke: "#fafaf9", "stroke-width": 2.5, "stroke-linecap": "round" });
+  svg.append(track, ticks, fill, body, cap, pointer);
+  knob.append(svg);
+
+  const readout = document.createElement("span");
+  readout.className = "font-mono text-xs text-stone-500";
+  wrapper.append(name, knob, readout);
+
+  function render() {
+    const value = settings[control.key];
+    const angle = start + positionOf(control, value) * KNOB_SWEEP;
+    pointer.setAttribute("transform", `rotate(${angle} 32 32)`);
+    fill.setAttribute("d", Math.abs(angle - origin) < 0.5 ? "" : arcPath(origin, angle, KNOB_RADIUS + 4));
+    readout.textContent = formatValue(control, value);
+    knob.setAttribute("aria-valuenow", value);
+    knob.setAttribute("aria-valuetext", readout.textContent);
+  }
+
+  function turnTo(position) {
+    const value = valueAt(control, position);
+    if (value === settings[control.key]) return;
+    settings[control.key] = value;
+    render();
+    applySettings();
+  }
+
+  let drag = null;
+  knob.addEventListener("pointerdown", (event) => {
+    knob.setPointerCapture(event.pointerId);
+    knob.focus();
+    drag = { y: event.clientY, position: positionOf(control, settings[control.key]) };
+  });
+  knob.addEventListener("pointermove", (event) => {
+    if (!drag) return;
+    const pixels = KNOB_DRAG_PX * (event.shiftKey ? 4 : 1);
+    turnTo(drag.position + (drag.y - event.clientY) / pixels);
+  });
+  const endDrag = () => (drag = null);
+  knob.addEventListener("pointerup", endDrag);
+  knob.addEventListener("pointercancel", endDrag);
+  knob.addEventListener("dblclick", () => {
+    settings[control.key] = control.value;
+    render();
+    applySettings();
+  });
+  knob.addEventListener("keydown", (event) => {
+    const position = positionOf(control, settings[control.key]);
+    const step = control.log ? 0.01 : control.step / (control.max - control.min);
+    const moves = {
+      ArrowUp: position + step, ArrowRight: position + step,
+      ArrowDown: position - step, ArrowLeft: position - step,
+      PageUp: position + 0.1, PageDown: position - 0.1, Home: 0, End: 1,
+    };
+    if (!(event.key in moves)) return;
+    event.preventDefault();
+    // A step can be smaller than the rounding of a log control: keep going
+    // until the value actually changes.
+    let target = moves[event.key];
+    const direction = Math.sign(target - position);
+    while (valueAt(control, target) === settings[control.key] && target > 0 && target < 1 && direction) {
+      target += direction * step;
+    }
+    turnTo(target);
+  });
+
+  knobs.set(control.key, render);
+  return wrapper;
+}
 
 for (const [group, controls] of Object.entries(CONTROLS)) {
   const container = document.querySelector(`[data-controls="${group}"]`);
-  for (const control of controls) {
-    const label = document.createElement("label");
-    label.className = "block text-sm";
-    const head = document.createElement("span");
-    head.className = "flex justify-between gap-2";
-    const name = document.createElement("span");
-    name.className = "font-medium";
-    name.textContent = control.label;
-    const readout = document.createElement("span");
-    readout.className = "font-mono text-stone-500";
-    head.append(name, readout);
-    const input = document.createElement("input");
-    input.type = "range";
-    input.className = "mt-1 w-full accent-amber-600";
-    input.min = control.log ? 0 : control.min;
-    input.max = control.log ? LOG_STEPS : control.max;
-    input.step = control.log ? 1 : control.step;
-    input.addEventListener("input", () => {
-      settings[control.key] = fromSlider(control, Number(input.value));
-      readout.textContent = formatValue(control, settings[control.key]);
-      applySettings();
-    });
-    // Double-click puts a control back to its default.
-    input.addEventListener("dblclick", () => {
-      settings[control.key] = control.value;
-      syncControls();
-      applySettings();
-    });
-    label.append(head, input);
-    container.append(label);
-    sliders.set(control.key, { control, input, readout });
-  }
+  for (const control of controls) container.append(createKnob(control));
 }
 
 for (const button of document.querySelectorAll("[data-switch]")) {
@@ -600,15 +715,12 @@ $("reset").addEventListener("click", () => {
 });
 
 function syncControls() {
-  for (const { control, input, readout } of sliders.values()) {
-    input.value = toSlider(control, settings[control.key]);
-    readout.textContent = formatValue(control, settings[control.key]);
-  }
+  for (const render of knobs.values()) render();
   for (const button of document.querySelectorAll("[data-switch]")) {
     const on = settings[button.dataset.switch];
     button.setAttribute("aria-pressed", String(on));
     button.querySelector(".switch-label").textContent = on ? "On" : "Off";
-    // The panel's sliders stay usable while off, but look inactive.
+    // The panel's knobs stay usable while off, but look inactive.
     const group = button.dataset.switch === "compOn" ? "comp" : "drive";
     document.querySelector(`[data-controls="${group}"]`).classList.toggle("opacity-50", !on);
   }
