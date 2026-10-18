@@ -38,12 +38,29 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.ref }}
+
+      # The WebAssembly modules depend only on the Rust sources and build
+      # settings hashed here, so a change that touches none of them (only
+      # web/, docs, the e2e tests) reuses the modules from the last build of
+      # the same inputs and skips the Rust toolchain, the build and clippy,
+      # which already passed on those exact sources. The site and the e2e
+      # tests still run on this commit's web files.
+      - name: Restore the WebAssembly modules built from the same Rust inputs
+        id: wasm-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: wasm-pkg
+          key: wasm-pkg-bindgen${{ env.WASM_BINDGEN_VERSION }}-${{ hashFiles('Cargo.toml', 'Cargo.lock', '.cargo/**', 'crates/**', 'scripts/build-web.sh') }}
+
       - uses: dtolnay/rust-toolchain@stable
+        if: steps.wasm-cache.outputs.cache-hit != 'true'
         with:
           targets: wasm32-unknown-unknown
           components: clippy
       - uses: Swatinem/rust-cache@v2
+        if: steps.wasm-cache.outputs.cache-hit != 'true'
       - uses: taiki-e/install-action@v2
+        if: steps.wasm-cache.outputs.cache-hit != 'true'
         with:
           tool: wasm-bindgen-cli@${{ env.WASM_BINDGEN_VERSION }}
 
@@ -52,6 +69,7 @@ jobs:
       # separate `cargo clippy` (dependencies still go through plain rustc).
       # CLIPPY_ARGS is how cargo-clippy passes `-- -D warnings` to clippy-driver.
       - name: Build the WebAssembly modules (with clippy) and assemble the site
+        if: steps.wasm-cache.outputs.cache-hit != 'true'
         env:
           RUSTC_WORKSPACE_WRAPPER: clippy-driver
           CLIPPY_ARGS: -D__CLIPPY_HACKERY__warnings__CLIPPY_HACKERY__
@@ -65,6 +83,21 @@ jobs:
             done
             exit 1
           fi
+
+      - name: Save the WebAssembly modules for builds with the same Rust inputs
+        if: steps.wasm-cache.outputs.cache-hit != 'true'
+        run: cp -r _site/pkg wasm-pkg
+      - uses: actions/cache/save@v4
+        if: steps.wasm-cache.outputs.cache-hit != 'true'
+        with:
+          path: wasm-pkg
+          key: ${{ steps.wasm-cache.outputs.cache-primary-key }}
+
+      - name: Assemble the site with the reused WebAssembly modules
+        if: steps.wasm-cache.outputs.cache-hit == 'true'
+        env:
+          PREBUILT_PKG: wasm-pkg
+        run: scripts/build-web.sh _site
 
       - uses: actions/setup-node@v4
         with:
