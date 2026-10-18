@@ -53,7 +53,8 @@ for (const string of STANDARD_STRINGS) {
   button.className =
     "string-button rounded-lg border border-stone-300 px-2 py-4 transition hover:border-amber-500 dark:border-stone-700";
   button.innerHTML = `<span class="block text-3xl font-bold">${string.name}</span>
-    <span class="block font-mono text-xs text-stone-500">${string.note} · ${string.frequency.toFixed(1)} Hz</span>`;
+    <span class="block font-mono text-xs text-stone-500">${string.note}</span>
+    <span class="block whitespace-nowrap font-mono text-xs text-stone-500">${string.frequency.toFixed(1)} Hz</span>`;
   button.addEventListener("click", () => playReference(string));
   $("strings").append(button);
   stringButtons.set(string.name, button);
