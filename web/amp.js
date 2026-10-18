@@ -48,7 +48,7 @@ const ALL_CONTROLS = Object.values(CONTROLS).flat();
 const DEFAULTS = {
   ...Object.fromEntries(ALL_CONTROLS.map((c) => [c.key, c.value])),
   compOn: false,
-  driveOn: true,
+  driveOn: false,
   driveType: "overdrive",
 };
 
