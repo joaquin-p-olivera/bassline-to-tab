@@ -23,7 +23,7 @@ build_variant() {
 
 rm -rf "${OUT_DIR}"
 mkdir -p "${OUT_DIR}"
-cp web/index.html web/*.js "${OUT_DIR}/"
+cp web/*.html web/*.js "${OUT_DIR}/"
 
 build_variant pkg
 

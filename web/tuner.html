@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bass Tuner · Bassline to Tab</title>
+  <meta name="description" content="Tune a bass to standard tuning (E A D G) by ear or with the microphone.">
+  <script src="https://cdn.tailwindcss.com/3.4.17"></script>
+</head>
+<body class="min-h-screen bg-stone-50 text-stone-900 dark:bg-stone-950 dark:text-stone-100">
+  <main class="mx-auto max-w-3xl px-4 py-10">
+    <header class="mb-8">
+      <a href="./" class="text-sm text-stone-500 underline hover:text-stone-700 dark:hover:text-stone-300">← Bassline to Tab</a>
+      <h1 class="mt-2 text-3xl font-bold tracking-tight">Bass tuner</h1>
+      <p class="mt-2 text-stone-600 dark:text-stone-400">
+        Standard tuning, E A D G. Play a reference note and tune by ear, or let the microphone listen to your bass.
+        Nothing is recorded or uploaded.
+      </p>
+    </header>
+
+    <section class="space-y-4 rounded-xl border border-stone-200 bg-white p-6 shadow-sm dark:border-stone-800 dark:bg-stone-900">
+      <div>
+        <h2 class="text-lg font-semibold">Reference notes</h2>
+        <p class="text-sm text-stone-500">Tap a string to hear how it sounds open. Headphones carry the low notes best.</p>
+      </div>
+      <div id="strings" class="grid grid-cols-4 gap-3" role="group" aria-label="Strings">
+        <!-- Filled by tuner.js, lowest string first. -->
+      </div>
+    </section>
+
+    <section class="mt-6 space-y-4 rounded-xl border border-stone-200 bg-white p-6 shadow-sm dark:border-stone-800 dark:bg-stone-900">
+      <div class="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 class="text-lg font-semibold">Tune with the microphone</h2>
+          <p class="text-sm text-stone-500">Play one open string at a time and let it ring.</p>
+        </div>
+        <button id="listen" type="button"
+          class="rounded-lg bg-amber-600 px-4 py-2 font-semibold text-white transition hover:bg-amber-700">
+          Start listening
+        </button>
+      </div>
+
+      <p id="mic-error" class="hidden rounded-lg bg-red-50 px-3 py-2 text-sm text-red-800 dark:bg-red-950 dark:text-red-200" role="alert"></p>
+
+      <div id="meter" class="hidden space-y-3 text-center" aria-live="polite">
+        <div class="flex items-baseline justify-center gap-3">
+          <span id="detected-string" class="text-6xl font-bold">–</span>
+          <span id="cents" class="font-mono text-2xl text-stone-500"></span>
+        </div>
+        <div class="relative mx-auto h-10 max-w-md rounded-lg bg-stone-100 dark:bg-stone-800" aria-hidden="true">
+          <div class="absolute inset-y-0 left-1/2 w-[10%] -translate-x-1/2 bg-green-200 dark:bg-green-900"></div>
+          <div class="absolute inset-y-0 left-1/2 w-px bg-stone-400"></div>
+          <div id="needle" class="absolute inset-y-1 w-1.5 -translate-x-1/2 rounded-full bg-stone-400 transition-[left] duration-100" style="left: 50%"></div>
+          <span class="absolute bottom-0 left-1 text-xs text-stone-500">−50</span>
+          <span class="absolute bottom-0 right-1 text-xs text-stone-500">+50</span>
+        </div>
+        <p id="advice" class="text-lg font-medium">Play a string</p>
+        <p id="frequency" class="font-mono text-xs text-stone-500"></p>
+      </div>
+    </section>
+
+    <footer class="mt-12 text-center text-xs text-stone-500">
+      <a class="underline hover:text-stone-700 dark:hover:text-stone-300" href="https://github.com/joaquin-p-olivera/bassline-to-tab">Source on GitHub</a>
+    </footer>
+  </main>
+  <script type="module" src="./tuner.js"></script>
+</body>
+</html>
