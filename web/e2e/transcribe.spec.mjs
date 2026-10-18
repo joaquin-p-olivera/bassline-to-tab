@@ -104,6 +104,37 @@ test("clicking a bar seeks the audio and shows the cursor", async ({ page }) => 
   await expect(page.locator(".tab-cursor:not([hidden])")).toHaveCount(1);
 });
 
+test("while playing, the line being played scrolls to the top", async ({ page }) => {
+  const logs = collectLogs(page);
+  await page.setViewportSize({ width: 390, height: 700 });
+  await transcribeRiff(page, logs);
+  await page.waitForFunction(() => document.getElementById("player").readyState >= 1);
+  // Room below the tab, so any line can reach the top of the window.
+  await page.evaluate(() => (document.body.style.paddingBottom = "3000px"));
+  const lines = page.locator(".tab-line");
+  expect(await lines.count()).toBeGreaterThan(2);
+
+  await lines.nth(2).click();
+  await page.evaluate(() => {
+    const player = document.getElementById("player");
+    player.muted = true;
+    return player.play();
+  });
+  // The line with the cursor sits just below the (sticky) player.
+  await expect
+    .poll(
+      () =>
+        page.evaluate(() => {
+          const line = document.querySelector(".tab-cursor:not([hidden])")?.closest(".tab-line");
+          if (!line) return null;
+          const playerHeight = document.getElementById("player-box").offsetHeight;
+          return Math.abs(line.getBoundingClientRect().top - playerHeight - 8) < 4;
+        }),
+      { timeout: 5_000 },
+    )
+    .toBe(true);
+});
+
 test("songs are kept in the history after a reload", async ({ page }) => {
   const logs = collectLogs(page);
   await transcribeRiff(page, logs);

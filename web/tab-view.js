@@ -1,7 +1,10 @@
 // Interactive tablature: wraps bars to the available width (no horizontal
 // scrolling), highlights the sixteenth being played and seeks on click.
+// While the audio plays, the line being played is scrolled to the top of the
+// view; scrolling by hand pauses that for a few seconds.
 
 const MIN_FONT_PX = 9;
+const MANUAL_SCROLL_PAUSE_MS = 4000;
 
 function cellWidth(frets) {
   return frets.some((fret) => fret >= 10) ? 3 : 2;
@@ -24,10 +27,17 @@ export class TabView {
     this.result = null;
     this.lines = [];
     this.activeLine = null;
-    this.follow = true;
+    this.followedLine = null;
+    this.manualScrollAt = -Infinity;
     this.onSeek = null;
     this.baseFontPx = parseFloat(getComputedStyle(container).fontSize) || 14;
     new ResizeObserver(() => this.#scheduleLayout()).observe(container);
+    const markManualScroll = () => (this.manualScrollAt = performance.now());
+    window.addEventListener("wheel", markManualScroll, { passive: true });
+    window.addEventListener("touchmove", markManualScroll, { passive: true });
+    window.addEventListener("keydown", (event) => {
+      if (["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key)) markManualScroll();
+    });
   }
 
   /// Shows a transcription returned by the worker.
@@ -37,8 +47,9 @@ export class TabView {
     this.layout();
   }
 
-  /// Moves the cursor to `seconds` of audio.
-  setTime(seconds) {
+  /// Moves the cursor to `seconds` of audio. With `follow`, also scrolls the
+  /// line being played to the top of the view.
+  setTime(seconds, follow = false) {
     this.lastTime = seconds;
     if (!this.result || !this.lines.length) return;
     const step = Math.floor((seconds - this.result.gridOrigin) / this.stepSeconds);
@@ -55,7 +66,10 @@ export class TabView {
       this.#hideCursor();
       line.cursor.hidden = false;
       this.activeLine = line;
-      if (this.follow) line.element.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    }
+    if (follow && this.followedLine !== line && performance.now() - this.manualScrollAt > MANUAL_SCROLL_PAUSE_MS) {
+      this.followedLine = line;
+      line.element.scrollIntoView({ block: "start", behavior: "smooth" });
     }
   }
 
@@ -97,6 +111,7 @@ export class TabView {
     this.container.replaceChildren(...lines.map((line) => line.element));
     this.lines = lines;
     this.activeLine = null;
+    this.followedLine = null;
   }
 
   #prepareBars() {
@@ -136,6 +151,8 @@ export class TabView {
 
     const element = document.createElement("div");
     element.className = "tab-line relative cursor-pointer";
+    // Keep the line clear of the sticky player when scrolled to the top.
+    element.style.scrollMarginTop = "calc(var(--sticky-top, 0px) + 0.5rem)";
     element.dataset.firstBar = String(line.firstBar);
     const pre = document.createElement("pre");
     pre.className = "leading-tight";

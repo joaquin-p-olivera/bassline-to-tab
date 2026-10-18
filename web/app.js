@@ -15,6 +15,10 @@ const fileInput = $("audio");
 const submitButton = $("submit");
 const player = $("player");
 const tabView = new TabView($("tab-view"));
+// The tab scrolls the line being played to just below the sticky player.
+new ResizeObserver(([entry]) =>
+  $("tab-view").style.setProperty("--sticky-top", `${entry.target.offsetHeight}px`),
+).observe($("player-box"));
 
 /// The song being worked on: a history record (see storage.js).
 let currentSong = null;
@@ -243,7 +247,7 @@ function selectSource(source) {
 }
 
 function followPlayback() {
-  tabView.setTime(player.currentTime);
+  tabView.setTime(player.currentTime, true);
   if (!player.paused) requestAnimationFrame(followPlayback);
 }
 
