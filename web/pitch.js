@@ -1,16 +1,36 @@
-// Pitch detection for the tuner: YIN on a decimated signal, plus the strings
-// of a standard-tuned bass. No DOM here, so the tests can import it directly.
+// Pitch detection for the tuner: YIN on a decimated signal, plus the tunings
+// a bass is commonly set to. No DOM here, so the tests can import it directly.
 
-/// Open strings of a standard-tuned four-string bass (MIDI note numbers).
-export const STANDARD_STRINGS = [
-  { name: "E", note: "E1", midi: 28 },
-  { name: "A", note: "A1", midi: 33 },
-  { name: "D", note: "D2", midi: 38 },
-  { name: "G", note: "G2", midi: 43 },
-].map((string) => ({ ...string, frequency: midiToFrequency(string.midi) }));
+const SHARP_NAMES = ["C", "C♯", "D", "D♯", "E", "F", "F♯", "G", "G♯", "A", "A♯", "B"];
+const FLAT_NAMES = ["C", "D♭", "D", "E♭", "E", "F", "G♭", "G", "A♭", "A", "B♭", "B"];
+
+/// A string tuned to `midi`, named with sharps or flats.
+function openString(midi, flats = false) {
+  const { name, octave } = noteName(midi, flats);
+  return { name, note: `${name}${octave}`, midi, frequency: midiToFrequency(midi) };
+}
+
+function tuning(id, label, midis, flats = false) {
+  return { id, label, strings: midis.map((midi) => openString(midi, flats)) };
+}
+
+/// Tunings offered by the tuner, open strings lowest first (MIDI note numbers).
+export const TUNINGS = [
+  tuning("standard", "Standard (E A D G)", [28, 33, 38, 43]),
+  tuning("drop-d", "Drop D (D A D G)", [26, 33, 38, 43]),
+  tuning("half-down", "Half step down (E♭ A♭ D♭ G♭)", [27, 32, 37, 42], true),
+  tuning("d-standard", "D standard (D G C F)", [26, 31, 36, 41]),
+  tuning("drop-c", "Drop C (C G C F)", [24, 31, 36, 41]),
+  tuning("five-string", "5 strings (B E A D G)", [23, 28, 33, 38, 43]),
+  tuning("five-string-high-c", "5 strings, high C (E A D G C)", [28, 33, 38, 43, 48]),
+  tuning("six-string", "6 strings (B E A D G C)", [23, 28, 33, 38, 43, 48]),
+];
+
+/// Open strings of a standard-tuned four-string bass.
+export const STANDARD_STRINGS = TUNINGS[0].strings;
 
 /// Lowest and highest fundamentals the detector looks for (Hz): below a low B
-/// (30.9 Hz) and above the 5th fret of the G string, with margin.
+/// (30.9 Hz) and above the 20th fret of the G string, with margin.
 const MIN_FREQUENCY = 28;
 const MAX_FREQUENCY = 400;
 /// The bass harmonics that matter sit far below this, so the signal is
@@ -32,6 +52,20 @@ export function midiToFrequency(midi) {
 
 export function centsBetween(frequency, reference) {
   return 1200 * Math.log2(frequency / reference);
+}
+
+/// Name and octave of a MIDI note in scientific pitch notation (C4 = 60).
+export function noteName(midi, flats = false) {
+  const pitchClass = ((midi % 12) + 12) % 12;
+  return { name: (flats ? FLAT_NAMES : SHARP_NAMES)[pitchClass], octave: Math.floor(midi / 12) - 1 };
+}
+
+/// The equal-tempered note closest to `frequency` (A4 = 440 Hz) and how far
+/// it is from it, in cents.
+export function nearestNote(frequency) {
+  const midi = Math.round(69 + 12 * Math.log2(frequency / 440));
+  const target = midiToFrequency(midi);
+  return { midi, ...noteName(midi), frequency: target, cents: centsBetween(frequency, target) };
 }
 
 /// The string closest to `frequency` (in cents) and how far it is from it.
