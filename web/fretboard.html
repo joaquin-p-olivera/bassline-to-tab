@@ -6,6 +6,7 @@
   <title>Bass Fretboard · Bassline to Tab</title>
   <meta name="description" content="Every fret of a standard-tuned bass (E A D G) with the note it plays.">
   <script src="https://cdn.tailwindcss.com/3.4.17"></script>
+  <script src="./theme.js"></script>
   <style>
     /* Plain CSS so the neck keeps its shape even if the Tailwind CDN fails. */
     #neck-scroll { overflow-x: auto; }
@@ -37,7 +38,11 @@
 <body class="min-h-screen bg-stone-50 text-stone-900 dark:bg-stone-950 dark:text-stone-100">
   <main class="mx-auto max-w-5xl px-4 py-10">
     <header class="mb-8">
-      <a href="./" class="text-sm text-stone-500 underline hover:text-stone-700 dark:hover:text-stone-300">← Bassline to Tab</a>
+      <div class="flex items-center justify-between gap-3">
+        <a href="./" class="text-sm text-stone-500 underline hover:text-stone-700 dark:hover:text-stone-300">← Bassline to Tab</a>
+        <button type="button" data-theme-toggle
+          class="inline-flex items-center gap-1.5 rounded-lg border border-stone-300 px-3 py-1.5 text-sm font-medium hover:border-amber-500 hover:bg-stone-100 dark:border-stone-700 dark:hover:bg-stone-800">Theme</button>
+      </div>
       <h1 class="mt-2 text-3xl font-bold tracking-tight">Bass fretboard</h1>
       <p class="mt-2 text-stone-600 dark:text-stone-400">
         Every fret of a standard-tuned bass (E A D G) and the note it plays. The highest string is on top, as in a tab.
