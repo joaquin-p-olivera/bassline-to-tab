@@ -5,6 +5,8 @@
 // Record shape:
 //   { id, name, createdAt, duration, file: File, bassWav: Blob | null,
 //     separated: boolean, lastOptions, lastResult }
+// bassWav is a 16-bit mono WAV, or an Ogg Opus (type "audio/ogg") when the
+// user chose to save the bass compressed; the name stays for compatibility.
 
 const DB_NAME = "bassline-to-tab";
 const DB_VERSION = 1;
