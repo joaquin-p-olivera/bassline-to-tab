@@ -43,13 +43,86 @@ Features:
 | --- | --- | --- |
 | `crates/core` | Rust | Platform-agnostic transcription: Basic Pitch inference (ONNX via [tract](https://github.com/sonos/tract), model embedded), note decoding, onset refinement, tuning and tempo estimation, fret assignment, ASCII tab, MIDI. |
 | `crates/web` | Rust → wasm | `wasm-bindgen` bindings: `separate_bass` (HTDemucs via [demucs-rs](https://github.com/nikhilunni/demucs-rs) on WebGPU) and `transcribe`. |
-| `web/` | HTML/JS | The page (`index.html`, `app.js`), the worker (`worker.js`), the interactive tab (`tab-view.js`) and the song history (`storage.js`). |
+| `web/` | HTML/JS | The page (`index.html`, `app.js`), the worker (`worker.js`), the interactive tab (`tab-view.js`), the song history (`storage.js`) and its export/import file (`archive.js`). |
 | `scripts/build-web.sh` | Bash | Builds the wasm module and assembles the site. |
 | `.github/workflows/web.yml` | CI | On every push: builds the wasm (with clippy) and runs the end-to-end tests in headless Chromium. |
 | `.github/workflows/deploy.yml` | CI | Manual only (Actions → Deploy to GitHub Pages → Run workflow): builds and tests a branch, then deploys it to GitHub Pages. Branches other than `main` need `confirm_non_main: yes`. |
 
 The first separation downloads the HTDemucs weights (~84 MB) from Hugging
 Face; the browser caches them for next time.
+
+## Song history file (`.bltab`)
+
+"Your songs" lives in the browser's IndexedDB. **Export songs** saves every
+song to one `.bltab` file and **Import songs** loads it back, in the same or
+another browser. It is a format of our own (written and read by
+[`web/archive.js`](web/archive.js)), not a zip: no extra library is needed,
+and the browser reads each audio file straight from the archive instead of
+loading the whole thing into memory.
+
+### Layout
+
+All integers are little endian. Offsets in the manifest are relative to the
+start of the data section, not to the start of the file.
+
+| Bytes | Content |
+| --- | --- |
+| 0–7 | Magic: the ASCII text `BLTABHX1` (identifies the file; `1` is the layout version). |
+| 8–11 | `N`: length of the manifest in bytes (unsigned 32-bit). |
+| 12 … 12+N−1 | Manifest: UTF-8 JSON (below). |
+| 12+N … end | Data section: every binary value of every song, back to back, with no padding or separators. |
+
+### Manifest
+
+```json
+{
+  "format": "bassline-to-tab-history",
+  "version": 1,
+  "exportedAt": 1792364400000,
+  "songs": [
+    {
+      "id": "song.mp3|5000000|1760000000000",
+      "name": "song.mp3",
+      "createdAt": 1792360000000,
+      "duration": 214.5,
+      "separated": true,
+      "file": { "$blob": { "offset": 0, "size": 5000000, "type": "audio/mpeg",
+                           "name": "song.mp3", "lastModified": 1760000000000 } },
+      "bassWav": { "$blob": { "offset": 5000000, "size": 18900000, "type": "audio/wav" } },
+      "lastOptions": { "tuning": "standard", "frets": 24, "bpm": null },
+      "lastResult": { "bpm": 100.2, "notes": [], "events": [], "tab": "…",
+                      "midi": { "$bytes": { "offset": 23900000, "size": 412, "kind": "Uint8Array" } } }
+    }
+  ]
+}
+```
+
+Each song is the IndexedDB record (see [`web/storage.js`](web/storage.js))
+with its binary values replaced by references into the data section:
+
+- `{"$blob": {offset, size, type, name?, lastModified?}}`: a Blob (the bass
+  stem, a 16-bit mono WAV). With `name` and `lastModified` it is a File (the
+  original audio), which keeps the song's `id` stable.
+- `{"$bytes": {offset, size, kind}}`: a typed array (the MIDI), where `kind`
+  is its type (`Uint8Array`, `Float32Array`, …) or `ArrayBuffer`.
+
+Everything else is plain JSON. A song without a separated bass has
+`"bassWav": null`; one never transcribed has no `lastResult`.
+
+### Reading and writing
+
+- **Export** walks each record, appends every binary value to the data
+  section and writes its offset and size in the manifest. The file is
+  assembled as a `Blob` of the parts, so nothing is copied in memory.
+- **Import** reads the 12-byte header and checks the magic, reads and parses
+  the manifest, checks `format` and `version`, and turns each reference
+  back into a slice of the chosen file (`file.slice(start, start + size)`).
+  References that point outside the file are rejected as a damaged file.
+- Songs are matched by `id`. If some already exist, the app asks whether to
+  replace them or keep yours and import only the new ones.
+- A file with a newer `version` than the app knows is rejected, so a future
+  layout change bumps `version` (and the magic's last digit if the header
+  itself changes).
 
 ## Browser support
 

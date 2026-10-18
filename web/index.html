@@ -144,12 +144,21 @@
       <p id="timings" class="font-mono text-xs text-stone-500"></p>
     </section>
 
-    <section id="history" class="mt-10 hidden">
+    <section id="history" class="mt-10">
       <div class="mb-3 flex flex-wrap items-baseline justify-between gap-2">
         <h2 class="text-xl font-semibold">Your songs</h2>
         <span id="storage-usage" class="text-xs text-stone-500"></span>
       </div>
-      <p class="mb-3 text-sm text-stone-500">Saved in this browser only. Opening a song reuses its separated bass, so changing the settings and transcribing again takes seconds.</p>
+      <p class="mb-3 text-sm text-stone-500">Saved in this browser only. Opening a song reuses its separated bass, so changing the settings and transcribing again takes seconds. Export them to keep a backup or move them to another browser.</p>
+      <div class="mb-3 flex flex-wrap items-center gap-2 text-sm">
+        <button id="export-history" type="button" class="rounded-lg border border-stone-300 px-3 py-1.5 hover:bg-stone-100 dark:border-stone-700 dark:hover:bg-stone-800">Export songs</button>
+        <label class="cursor-pointer rounded-lg border border-stone-300 px-3 py-1.5 hover:bg-stone-100 dark:border-stone-700 dark:hover:bg-stone-800">
+          Import songs
+          <input id="import-history" type="file" accept=".bltab" class="sr-only">
+        </label>
+        <span id="history-message" class="text-xs text-stone-500"></span>
+      </div>
+      <p id="history-empty" class="hidden rounded-xl border border-dashed border-stone-300 px-4 py-3 text-sm text-stone-500 dark:border-stone-700">No songs yet. Transcribe one, or import songs exported from another browser.</p>
       <ul id="history-list" class="divide-y divide-stone-200 rounded-xl border border-stone-200 bg-white dark:divide-stone-800 dark:border-stone-800 dark:bg-stone-900"></ul>
     </section>
 

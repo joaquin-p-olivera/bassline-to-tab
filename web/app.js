@@ -1,7 +1,8 @@
 // Main thread: UI, audio decoding (Web Audio API), song history and talking
 // to the worker. The heavy lifting (Demucs, Basic Pitch) runs in worker.js.
 
-import { deleteSong, getSong, listSongs, saveSong, songId, storageUsage } from "./storage.js";
+import { ARCHIVE_EXTENSION, exportSongs, importSongs } from "./archive.js";
+import { deleteSong, getSong, listSongs, putSongs, saveSong, songId, storageInfo } from "./storage.js";
 import { TabView } from "./tab-view.js";
 
 const SEPARATION_SAMPLE_RATE = 44100;
@@ -402,12 +403,67 @@ function historyItem(song) {
   return item;
 }
 
+function describeStorage({ usage, quota, persisted }) {
+  const parts = [];
+  if (usage !== null && quota !== null) parts.push(`${formatMegabytes(usage)} used of ${formatMegabytes(quota)} available`);
+  else if (usage !== null) parts.push(`${formatMegabytes(usage)} used in this browser`);
+  if (persisted === true) parts.push("kept until you delete it");
+  else if (persisted === false) parts.push("the browser may clear it if space runs low");
+  return parts.join(" · ");
+}
+
+function formatMegabytes(bytes) {
+  return bytes >= 1e10 ? `${(bytes / 1e9).toFixed(0)} GB` : `${Math.round(bytes / 1e6).toLocaleString()} MB`;
+}
+
 async function refreshHistory() {
   const songs = await listSongs();
   $("history-list").replaceChildren(...songs.map(historyItem));
-  show($("history"), songs.length > 0);
-  const usage = await storageUsage();
-  $("storage-usage").textContent = usage === null ? "" : `${(usage / 1e6).toFixed(0)} MB used in this browser`;
+  show($("history-list"), songs.length > 0);
+  show($("history-empty"), songs.length === 0);
+  show($("export-history"), songs.length > 0);
+  $("storage-usage").textContent = describeStorage(await storageInfo());
+  return songs;
+}
+
+function historyMessage(text) {
+  $("history-message").textContent = text;
+}
+
+async function exportHistory() {
+  const songs = await listSongs();
+  if (!songs.length) return;
+  const date = new Date().toISOString().slice(0, 10);
+  download(`bassline-to-tab-songs-${date}${ARCHIVE_EXTENSION}`, exportSongs(songs));
+  historyMessage(`Exported ${songs.length} ${songs.length === 1 ? "song" : "songs"}.`);
+}
+
+async function importHistory(file) {
+  historyMessage("Importing…");
+  try {
+    const imported = await importSongs(file);
+    const existing = new Set((await listSongs()).map((song) => song.id));
+    const duplicates = imported.filter((song) => existing.has(song.id));
+    let toSave = imported;
+    if (duplicates.length) {
+      const replace = confirm(
+        `${duplicates.length} of the imported songs ${duplicates.length === 1 ? "is" : "are"} already in your songs. ` +
+          "Replace them with the imported version? (Cancel keeps yours and imports only the new ones.)",
+      );
+      if (!replace) toSave = imported.filter((song) => !existing.has(song.id));
+    }
+    await putSongs(toSave);
+    const replacedCurrent = toSave.find((song) => song.id === currentSong?.id);
+    if (replacedCurrent) currentSong = replacedCurrent;
+    await refreshHistory();
+    const skipped = imported.length - toSave.length;
+    historyMessage(
+      `Imported ${toSave.length} ${toSave.length === 1 ? "song" : "songs"}` + (skipped ? `, kept ${skipped} of yours.` : "."),
+    );
+  } catch (error) {
+    console.error(error);
+    historyMessage(`Could not import: ${error.message || error}`);
+  }
 }
 
 // ─── Main flow ──────────────────────────────────────────────────────────────
@@ -542,6 +598,14 @@ $("copy").addEventListener("click", async () => {
   await navigator.clipboard.writeText(currentFingering().tab);
   $("copy").textContent = "Copied";
   setTimeout(() => ($("copy").textContent = "Copy"), 1500);
+});
+
+$("export-history").addEventListener("click", exportHistory);
+
+$("import-history").addEventListener("change", async () => {
+  const file = $("import-history").files[0];
+  $("import-history").value = "";
+  if (file) await importHistory(file);
 });
 
 $("download-tab").addEventListener("click", () => {

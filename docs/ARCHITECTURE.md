@@ -44,7 +44,7 @@ static files; there is no backend.
 
 | Thread | Code | Responsibilities |
 | --- | --- | --- |
-| Main thread | `web/app.js`, `web/tab-view.js`, `web/storage.js` | UI, audio decoding and resampling (the Web Audio API only exists here), song history, playback and the tab cursor. |
+| Main thread | `web/app.js`, `web/tab-view.js`, `web/storage.js`, `web/archive.js` | UI, audio decoding and resampling (the Web Audio API only exists here), song history, playback and the tab cursor. |
 | Web Worker | `web/worker.js` + `pkg/bassline_web.js` / `.wasm` | Downloads and caches the Demucs weights, runs separation and transcription so the page stays responsive. |
 
 One transcription, end to end:
@@ -278,6 +278,7 @@ position as soon as that is cheaper overall.
 | Interactive tab | `web/tab-view.js`: `TabView` | Lays bars out to fit the container width (no horizontal scrolling), shrinks the font on narrow screens, highlights the current sixteenth from the audio time, seeks on click. |
 | Playback | `web/app.js`: `setPlayerSources`, `selectSource`, `followPlayback` | One `<audio>` element switching between the bass stem and the original mix; a `requestAnimationFrame` loop drives the cursor. |
 | History | `web/storage.js`: `saveSong`, `getSong`, `listSongs`, `deleteSong` | IndexedDB records with the original file, the bass stem (16-bit mono WAV) and the last transcription, so re-transcribing reuses the bass. |
+| History backup | `web/archive.js`: `exportSongs`, `importSongs` | One `.bltab` file with every song: an 8-byte magic, a JSON manifest and the files and MIDI back to back. Import merges into the history, asking whether to replace songs that are already there. |
 | Flow | `web/app.js`: `run`, `prepareSource` | Decode → separate (or reuse the saved bass) → resample → transcribe → save → show. |
 
 ## Third-party versus own

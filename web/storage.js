@@ -94,12 +94,35 @@ export async function deleteSong(id) {
   }
 }
 
-/// Bytes used by this site (history + cached model), if the browser reports it.
-export async function storageUsage() {
+/// Stores whole records, replacing any song with the same id (used by import).
+export async function putSongs(records) {
+  const db = await openDb();
+  const transaction = db.transaction(STORE, "readwrite");
+  const store = transaction.objectStore(STORE);
+  for (const record of records) store.put(record);
+  await new Promise((resolve, reject) => {
+    transaction.oncomplete = resolve;
+    transaction.onerror = () => reject(transaction.error);
+    transaction.onabort = () => reject(transaction.error);
+  });
+  navigator.storage?.persist?.().catch(() => {});
+}
+
+/// Bytes used by this site (history + cached model) and available to it, and
+/// whether the browser promised not to evict the data. Missing values are null.
+export async function storageInfo() {
+  const info = { usage: null, quota: null, persisted: null };
   try {
-    const { usage } = await navigator.storage.estimate();
-    return usage ?? null;
+    const { usage, quota } = await navigator.storage.estimate();
+    info.usage = usage ?? null;
+    info.quota = quota ?? null;
   } catch {
-    return null;
+    // Not reported by this browser.
   }
+  try {
+    info.persisted = await navigator.storage.persisted();
+  } catch {
+    // Not reported by this browser.
+  }
+  return info;
 }
