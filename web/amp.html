@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bass Amp · Bassline to Tab</title>
+  <meta name="description" content="Record your bass with the microphone and play it back through a compressor, a drive pedal and an amp EQ, changing the sound while it plays.">
+  <script src="https://cdn.tailwindcss.com/3.4.17"></script>
+  <script src="./theme.js"></script>
+  <style>
+    .graph { display: block; width: 100%; }
+    .switch[aria-pressed="true"] .led { background: #f59e0b; box-shadow: 0 0 6px #f59e0b; }
+  </style>
+</head>
+<body class="min-h-screen bg-stone-50 text-stone-900 dark:bg-stone-950 dark:text-stone-100">
+  <main class="mx-auto max-w-3xl px-4 py-10 lg:max-w-6xl">
+    <header class="mb-8">
+      <div class="flex items-center justify-between gap-3">
+        <a href="./" class="text-sm text-stone-500 underline hover:text-stone-700 dark:hover:text-stone-300">← Bassline to Tab</a>
+        <button type="button" data-theme-toggle
+          class="inline-flex items-center gap-1.5 rounded-lg border border-stone-300 px-3 py-1.5 text-sm font-medium hover:border-amber-500 hover:bg-stone-100 dark:border-stone-700 dark:hover:bg-stone-800">Theme</button>
+      </div>
+      <h1 class="mt-2 text-3xl font-bold tracking-tight">Bass amp</h1>
+      <p class="mt-2 text-stone-600 dark:text-stone-400">
+        Record your bass with the microphone, then play the take through a compressor, a drive pedal and
+        the amp's EQ. Move the controls while it plays to hear the change. Nothing is uploaded.
+      </p>
+    </header>
+
+    <section class="space-y-4 rounded-xl border border-stone-200 bg-white p-6 shadow-sm dark:border-stone-800 dark:bg-stone-900">
+      <div class="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 class="text-lg font-semibold">Record your bass</h2>
+          <p class="text-sm text-stone-500">Hold the phone or laptop close to the amp or the strings. Up to two minutes.</p>
+        </div>
+        <button id="record" type="button"
+          class="rounded-lg bg-amber-600 px-4 py-2 font-semibold text-white transition hover:bg-amber-700">
+          Record
+        </button>
+      </div>
+
+      <p id="mic-error" class="hidden rounded-lg bg-red-50 px-3 py-2 text-sm text-red-800 dark:bg-red-950 dark:text-red-200" role="alert"></p>
+
+      <div id="recording" class="hidden space-y-2" aria-live="polite">
+        <div class="flex items-center gap-3 text-sm">
+          <span class="inline-block h-3 w-3 animate-pulse rounded-full bg-red-600" aria-hidden="true"></span>
+          <span>Recording <span id="record-time" class="font-mono">0:00</span></span>
+        </div>
+        <div class="h-2 overflow-hidden rounded-full bg-stone-100 dark:bg-stone-800" aria-hidden="true">
+          <div id="input-level" class="h-full w-0 rounded-full bg-green-500 transition-[width] duration-75"></div>
+        </div>
+      </div>
+
+      <div id="player" class="hidden space-y-3">
+        <canvas id="waveform" class="graph h-20 cursor-pointer rounded-lg bg-stone-100 dark:bg-stone-800"
+          aria-label="Recorded take. Click to jump to that moment."></canvas>
+        <div class="flex flex-wrap items-center gap-3">
+          <button id="play" type="button"
+            class="rounded-lg bg-stone-900 px-4 py-2 font-semibold text-white hover:bg-stone-700 dark:bg-stone-100 dark:text-stone-900 dark:hover:bg-stone-300">
+            Play
+          </button>
+          <span class="font-mono text-sm text-stone-500"><span id="position">0:00</span> / <span id="duration">0:00</span></span>
+          <label class="flex items-center gap-2 text-sm">
+            <input id="loop" type="checkbox" checked class="h-4 w-4 accent-amber-600"> Loop
+          </label>
+          <button id="bypass" type="button" aria-pressed="false"
+            class="rounded-lg border border-stone-300 px-3 py-1.5 text-sm font-medium dark:border-stone-700"
+            title="Hear the take without any effect, to compare">
+            Bypass all
+          </button>
+          <button id="download" type="button"
+            class="ml-auto rounded-lg border border-stone-300 px-3 py-1.5 text-sm font-medium hover:border-amber-500 dark:border-stone-700">
+            Download .wav
+          </button>
+        </div>
+        <p class="text-xs text-stone-500">Headphones carry the low notes best; small speakers barely play them.</p>
+      </div>
+    </section>
+
+    <div class="mt-6 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+      <section class="space-y-4 rounded-xl sm:col-span-2 lg:col-span-1 border border-stone-200 bg-white p-6 shadow-sm dark:border-stone-800 dark:bg-stone-900">
+        <div class="flex items-center justify-between gap-3">
+          <h2 class="text-lg font-semibold">Amp</h2>
+          <button id="reset" type="button" class="text-sm text-stone-500 underline hover:text-stone-700 dark:hover:text-stone-300">
+            Reset all controls
+          </button>
+        </div>
+        <p class="text-sm text-stone-500">Drag a knob up or down to turn it; double-click to reset it.</p>
+        <div data-controls="amp" class="flex flex-wrap justify-center gap-x-6 gap-y-4 rounded-xl bg-stone-100 px-2 py-4 dark:bg-stone-950"></div>
+        <canvas id="eq-graph" class="graph h-48" aria-label="EQ curve over the sound's spectrum"></canvas>
+        <p class="text-xs text-stone-500">
+          <span class="font-semibold text-amber-600">Line</span>: how the EQ boosts or cuts each frequency.
+          <span class="font-semibold text-stone-400">Shaded</span>: the spectrum of what is playing, after every effect.
+        </p>
+      </section>
+
+      <section class="space-y-4 rounded-xl border border-stone-200 bg-white p-6 shadow-sm dark:border-stone-800 dark:bg-stone-900">
+        <div class="flex items-center justify-between gap-3">
+          <h2 class="text-lg font-semibold">Compressor</h2>
+          <button type="button" data-switch="compOn" aria-pressed="false"
+            class="switch flex items-center gap-2 rounded-lg border border-stone-300 px-3 py-1.5 text-sm font-medium dark:border-stone-700">
+            <span class="led inline-block h-2.5 w-2.5 rounded-full bg-stone-300 dark:bg-stone-600" aria-hidden="true"></span>
+            <span class="switch-label">Off</span>
+          </button>
+        </div>
+        <p class="text-sm text-stone-500">Evens out loud and soft notes.</p>
+        <div data-controls="comp" class="flex flex-wrap justify-center gap-x-3 gap-y-4"></div>
+        <canvas id="comp-graph" class="graph h-40" aria-label="Compressor curve: input level against output level"></canvas>
+        <div class="text-sm">
+          <div class="flex justify-between text-stone-500"><span>Gain reduction</span><span id="reduction" class="font-mono">0.0 dB</span></div>
+          <div class="mt-1 flex h-2 justify-end overflow-hidden rounded-full bg-stone-100 dark:bg-stone-800" aria-hidden="true">
+            <div id="reduction-bar" class="h-full w-0 bg-amber-500"></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="space-y-4 rounded-xl border border-stone-200 bg-white p-6 shadow-sm dark:border-stone-800 dark:bg-stone-900">
+        <div class="flex items-center justify-between gap-3">
+          <h2 class="text-lg font-semibold">Drive</h2>
+          <button type="button" data-switch="driveOn" aria-pressed="false"
+            class="switch flex items-center gap-2 rounded-lg border border-stone-300 px-3 py-1.5 text-sm font-medium dark:border-stone-700">
+            <span class="led inline-block h-2.5 w-2.5 rounded-full bg-stone-300 dark:bg-stone-600" aria-hidden="true"></span>
+            <span class="switch-label">Off</span>
+          </button>
+        </div>
+        <div class="inline-flex rounded-lg border border-stone-300 p-1 dark:border-stone-700" role="radiogroup" aria-label="Drive type">
+          <button type="button" data-drive="overdrive" role="radio" class="drive-type rounded-md px-3 py-1.5 text-sm font-medium">Overdrive</button>
+          <button type="button" data-drive="distortion" role="radio" class="drive-type rounded-md px-3 py-1.5 text-sm font-medium">Distortion</button>
+          <button type="button" data-drive="fuzz" role="radio" class="drive-type rounded-md px-3 py-1.5 text-sm font-medium">Fuzz</button>
+        </div>
+        <div data-controls="drive" class="flex flex-wrap justify-center gap-x-3 gap-y-4"></div>
+        <canvas id="drive-graph" class="graph h-40" aria-label="Drive curve: how the signal is clipped"></canvas>
+      </section>
+    </div>
+
+    <footer class="mt-12 text-center text-xs text-stone-500">
+      <a class="underline hover:text-stone-700 dark:hover:text-stone-300" href="https://github.com/joaquin-p-olivera/bassline-to-tab">Source on GitHub</a>
+    </footer>
+  </main>
+  <script type="module" src="./amp.js"></script>
+</body>
+</html>
