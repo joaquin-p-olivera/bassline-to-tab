@@ -2,6 +2,7 @@
 // from the microphone (see pitch.js), either against the strings of the chosen
 // tuning or against any note.
 
+import { openInput, setupInputSelect } from "./audio-input.js";
 import { TUNINGS, detectPitch, frameLength, nearestNote, nearestString } from "./pitch.js";
 
 /// Within this many cents the string counts as in tune.
@@ -185,17 +186,25 @@ setMode(mode);
 // ─── Microphone ─────────────────────────────────────────────────────────────
 
 $("listen").addEventListener("click", () => (listening ? stopListening() : startListening()));
+setupInputSelect($("audio-input"));
+// Switching inputs while listening reopens the stream on the new one.
+$("audio-input").addEventListener("change", () => {
+  if (!listening) return;
+  stopListening();
+  startListening();
+});
 
 async function startListening() {
   show($("mic-error"), false);
   const ctx = context();
   let stream;
   try {
-    // Echo cancellation, noise suppression and gain control are made for
-    // voices: they filter out and pump the low, sustained notes of a bass.
-    stream = await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
-    });
+    let fellBack;
+    ({ stream, fellBack } = await openInput($("audio-input")));
+    if (fellBack) {
+      $("mic-error").textContent = "The chosen input is not connected, so the default input is listening.";
+      show($("mic-error"), true);
+    }
   } catch (error) {
     const box = $("mic-error");
     box.textContent =
@@ -240,6 +249,10 @@ async function startListening() {
   };
 
   listening = { stream, source, frame: 0, reset };
+  // Unplugging the interface ends the track.
+  for (const track of stream.getTracks()) {
+    track.addEventListener("ended", () => listening?.stream === stream && stopListening());
+  }
   $("listen").textContent = "Stop listening";
   show($("meter"), true);
   showReading(null);

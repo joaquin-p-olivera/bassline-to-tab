@@ -3,6 +3,8 @@
 // nodes), so the controls change the sound while it plays. The same chain,
 // built on an OfflineAudioContext, renders the .wav download.
 
+import { openInput, setupInputSelect } from "./audio-input.js";
+
 const SETTINGS_KEY = "amp.settings";
 const MAX_RECORD_SECONDS = 120;
 /// The take is scaled to this peak, so the drive and compressor controls
@@ -263,6 +265,7 @@ let recorder = null;
 let take = null;
 
 $("record").addEventListener("click", () => (recorder ? stopRecording() : startRecording()));
+setupInputSelect($("audio-input"));
 
 async function startRecording() {
   show($("mic-error"), false);
@@ -273,10 +276,9 @@ async function startRecording() {
   const ctx = context();
   let stream;
   try {
-    // Echo cancellation and automatic gain would pump and filter the bass.
-    stream = await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
-    });
+    let fellBack;
+    ({ stream, fellBack } = await openInput($("audio-input")));
+    if (fellBack) showMicError("The chosen input is not connected, so this take uses the default input.");
   } catch (error) {
     showMicError(
       error.name === "NotAllowedError"
@@ -297,12 +299,16 @@ async function startRecording() {
   const startedAt = performance.now();
 
   recorder = { mediaRecorder, stream, frame: 0 };
+  // Unplugging the interface ends the track: keep what was recorded so far.
+  for (const track of stream.getTracks()) track.addEventListener("ended", stopRecording);
+  $("audio-input").disabled = true;
   mediaRecorder.addEventListener("dataavailable", (event) => chunks.push(event.data));
   mediaRecorder.addEventListener("stop", async () => {
     micSource.disconnect();
     for (const track of stream.getTracks()) track.stop();
     cancelAnimationFrame(recorder.frame);
     recorder = null;
+    $("audio-input").disabled = false;
     show($("recording"), false);
     try {
       const blob = new Blob(chunks, { type: mediaRecorder.mimeType });
