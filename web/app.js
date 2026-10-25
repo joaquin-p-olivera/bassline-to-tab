@@ -2,6 +2,7 @@
 // to the worker. The heavy lifting (Demucs, Basic Pitch) runs in worker.js.
 
 import { ARCHIVE_EXTENSION, exportSongs, importSongs } from "./archive.js";
+import { openInput, setupInputSelect } from "./audio-input.js";
 import { deleteSong, getSong, listSongs, putSongs, saveSong, songId, storageInfo } from "./storage.js";
 import { TabView } from "./tab-view.js";
 
@@ -593,6 +594,7 @@ function setRecordingUi(active) {
   $("record-dot").classList.toggle("rounded-sm", active);
   $("record-dot").classList.toggle("animate-pulse", active);
   submitButton.disabled = active;
+  $("audio-input").disabled = active;
   if (!active) {
     $("record-level").style.width = "0";
     $("record-meter").setAttribute("aria-valuenow", "0");
@@ -601,12 +603,9 @@ function setRecordingUi(active) {
 
 async function startRecording() {
   let stream;
+  let fellBack;
   try {
-    // Echo cancellation, noise suppression and automatic gain filter out or
-    // pump the low frequencies, which is most of a bass.
-    stream = await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
-    });
+    ({ stream, fellBack } = await openInput($("audio-input")));
   } catch (error) {
     recordMessage(
       error.name === "NotAllowedError"
@@ -647,7 +646,11 @@ async function startRecording() {
   fileInput.value = "";
   $("file-label").textContent = "Recording from the microphone…";
   setRecordingUi(true);
-  recordMessage("Recording. Play your bass line, then press Stop.");
+  recordMessage(
+    fellBack
+      ? "Recording from the default input: the chosen one is not connected. Press Stop when you are done."
+      : "Recording. Play your bass line, then press Stop.",
+  );
   requestAnimationFrame(drawRecording);
 }
 
@@ -726,6 +729,7 @@ async function stopRecording() {
 }
 
 $("record").addEventListener("click", () => (recording ? stopRecording() : startRecording()));
+setupInputSelect($("audio-input"));
 
 if (!navigator.mediaDevices?.getUserMedia || !window.AudioWorkletNode) {
   $("record").disabled = true;

@@ -6,6 +6,7 @@
   <title>Bassline to Tab</title>
   <meta name="description" content="Turn a song into bass tablature, entirely in your browser.">
   <script src="https://cdn.tailwindcss.com/3.4.17"></script>
+  <script src="./theme.js"></script>
 </head>
 <body class="min-h-screen bg-stone-50 text-stone-900 dark:bg-stone-950 dark:text-stone-100">
   <main class="mx-auto max-w-3xl px-4 py-10">
@@ -17,6 +18,10 @@
             class="rounded-lg border border-stone-300 px-3 py-1.5 text-sm font-medium hover:border-amber-500 hover:bg-stone-100 dark:border-stone-700 dark:hover:bg-stone-800">Fretboard notes</a>
           <a id="tuner-link" href="./tuner.html"
             class="rounded-lg border border-stone-300 px-3 py-1.5 text-sm font-medium hover:border-amber-500 hover:bg-stone-100 dark:border-stone-700 dark:hover:bg-stone-800">Tune your bass</a>
+          <a id="amp-link" href="./amp.html"
+            class="rounded-lg border border-stone-300 px-3 py-1.5 text-sm font-medium hover:border-amber-500 hover:bg-stone-100 dark:border-stone-700 dark:hover:bg-stone-800">Bass amp</a>
+          <button type="button" data-theme-toggle
+            class="inline-flex items-center gap-1.5 rounded-lg border border-stone-300 px-3 py-1.5 text-sm font-medium hover:border-amber-500 hover:bg-stone-100 dark:border-stone-700 dark:hover:bg-stone-800">Theme</button>
         </nav>
       </div>
       <p class="mt-2 text-stone-600 dark:text-stone-400">
@@ -54,8 +59,13 @@
             <div id="record-level" class="h-full w-0 bg-green-600"></div>
           </div>
         </div>
+        <div class="mt-3 flex flex-wrap items-center gap-2 text-sm">
+          <label for="audio-input" class="text-stone-500">Input</label>
+          <select id="audio-input"
+            class="min-w-0 max-w-full flex-1 rounded-lg border border-stone-300 bg-white px-2 py-1.5 text-sm sm:flex-none dark:border-stone-700 dark:bg-stone-900"></select>
+        </div>
         <p id="record-message" class="mt-3 text-xs text-stone-500">
-          Play close to the microphone, or plug the bass into an audio interface. When you stop, the recording is
+          Play close to the microphone, or plug the bass into an audio interface and pick it as the input. When you stop, the recording is
           transcribed and saved in your songs.
         </p>
       </div>
