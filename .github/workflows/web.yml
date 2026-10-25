@@ -47,7 +47,7 @@ jobs:
       # tests still run on this commit's web files.
       - name: Restore the WebAssembly modules built from the same Rust inputs
         id: wasm-cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: wasm-pkg
           key: wasm-pkg-bindgen${{ env.WASM_BINDGEN_VERSION }}-${{ hashFiles('Cargo.toml', 'Cargo.lock', '.cargo/**', 'crates/**', 'scripts/build-web.sh') }}
@@ -87,7 +87,7 @@ jobs:
       - name: Save the WebAssembly modules for builds with the same Rust inputs
         if: steps.wasm-cache.outputs.cache-hit != 'true'
         run: cp -r _site/pkg wasm-pkg
-      - uses: actions/cache/save@v4
+      - uses: actions/cache/save@v6
         if: steps.wasm-cache.outputs.cache-hit != 'true'
         with:
           path: wasm-pkg
