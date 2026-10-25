@@ -23,7 +23,8 @@
       <h1 class="mt-2 text-3xl font-bold tracking-tight">Bass amp</h1>
       <p class="mt-2 text-stone-600 dark:text-stone-400">
         Record your bass with the microphone, then play the take through a compressor, a drive pedal and
-        the amp's EQ. Move the controls while it plays to hear the change. Nothing is uploaded.
+        the amp's EQ. Move the controls while it plays to hear the change. Nothing is uploaded, unless you
+        sync your saved takes with your own Google Drive.
       </p>
     </header>
 
@@ -92,7 +93,21 @@
       <div class="space-y-2 border-t border-stone-200 pt-4 dark:border-stone-800">
         <div class="flex flex-wrap items-baseline justify-between gap-2">
           <h3 class="font-semibold">Saved takes</h3>
-          <p class="text-xs text-stone-500">Kept in this browser with the controls you saved them with.</p>
+          <p class="text-xs text-stone-500">Kept with the controls you saved them with.</p>
+        </div>
+        <div id="drive" class="hidden flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg bg-stone-100 px-3 py-2 text-sm dark:bg-stone-800">
+          <p id="drive-status" class="w-full min-w-0 text-stone-600 sm:w-auto sm:flex-1 dark:text-stone-300" aria-live="polite">
+            Keep your takes in your Google Drive too, to open them in any browser.
+          </p>
+          <div class="flex flex-wrap items-center gap-2">
+            <button id="drive-sync" type="button"
+              class="rounded-lg border border-stone-300 bg-white px-3 py-1.5 font-medium hover:border-amber-500 disabled:cursor-default disabled:opacity-60 dark:border-stone-700 dark:bg-stone-900">
+              Connect Google Drive
+            </button>
+            <button id="drive-disconnect" type="button" class="hidden text-stone-500 underline hover:text-stone-700 dark:hover:text-stone-300">
+              Disconnect
+            </button>
+          </div>
         </div>
         <p id="takes-message" class="hidden rounded-lg bg-red-50 px-3 py-2 text-sm text-red-800 dark:bg-red-950 dark:text-red-200" role="alert"></p>
         <p id="takes-empty" class="text-sm text-stone-500">No saved takes yet. Record one and press <span class="font-medium">Save take</span>.</p>

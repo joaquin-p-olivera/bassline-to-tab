@@ -2,9 +2,14 @@
 // through a compressor, a drive pedal and a three-band amp EQ (all Web Audio
 // nodes), so the controls change the sound while it plays. The same chain,
 // built on an OfflineAudioContext, renders the .wav download. Takes can be
-// saved in IndexedDB (storage.js) together with the controls' settings.
+// saved in IndexedDB (storage.js) together with the controls' settings, and
+// synced with the user's Google Drive (drive-sync.js).
 
 import { openInput, setupInputSelect } from "./audio-input.js";
+import {
+  connectDrive, disconnectDrive, driveAccount, driveConfigured, driveConnected, forgetTake, preloadDrive, pushTake,
+  syncTakes,
+} from "./drive-sync.js";
 import { deleteTake, getTake, listTakes, saveTake } from "./storage.js";
 
 const SETTINGS_KEY = "amp.settings";
@@ -564,12 +569,13 @@ $("save-take").addEventListener("click", async () => {
   const snapshot = { ...settings };
   let ok;
   if (current) {
-    ok = await saveTake({ id: current.id, settings: snapshot });
+    ok = await saveTake({ id: current.id, settings: snapshot, updatedAt: Date.now() });
   } else {
     const record = {
       id: crypto.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`,
       name: await nextTakeName(),
       createdAt: Date.now(),
+      updatedAt: Date.now(),
       duration: take.duration,
       audio: takeAudio,
       settings: snapshot,
@@ -577,8 +583,10 @@ $("save-take").addEventListener("click", async () => {
     ok = await saveTake(record);
     if (ok) current = { id: record.id, name: record.name };
   }
-  if (ok) current.settingsKey = JSON.stringify(snapshot);
-  else takesMessage("Could not save the take: this browser is not letting the page store data (private window?).");
+  if (ok) {
+    current.settingsKey = JSON.stringify(snapshot);
+    sendToDrive(current.id);
+  } else takesMessage("Could not save the take: this browser is not letting the page store data (private window?).");
   updateSaveButton();
   renderTakes();
 });
@@ -634,7 +642,7 @@ async function renderTakes() {
       (isCurrent ? "border-amber-500 bg-amber-50 dark:bg-amber-950/40" : "border-stone-200 dark:border-stone-800");
 
     const details = document.createElement("div");
-    details.className = "min-w-0 flex-1";
+    details.className = "w-full min-w-0 sm:w-auto sm:flex-1";
     const name = document.createElement("input");
     name.type = "text";
     name.value = saved.name;
@@ -648,7 +656,8 @@ async function renderTakes() {
     name.addEventListener("change", async () => {
       const value = name.value.trim() || saved.name;
       name.value = value;
-      await saveTake({ id: saved.id, name: value });
+      await saveTake({ id: saved.id, name: value, updatedAt: Date.now() });
+      sendToDrive(saved.id);
       if (saved.id === current?.id) {
         current.name = value;
         updateSaveButton();
@@ -657,7 +666,9 @@ async function renderTakes() {
     });
     const meta = document.createElement("p");
     meta.className = "px-1 text-xs text-stone-500";
-    meta.textContent = `${formatTime(saved.duration)} · ${dateFormat.format(saved.createdAt)} · ${soundSummary(saved.settings)}`;
+    meta.textContent =
+      `${formatTime(saved.duration)} · ${dateFormat.format(saved.createdAt)} · ${soundSummary(saved.settings)}` +
+      (saved.driveFileId ? " · In Drive" : "");
     details.append(name, meta);
 
     const open = document.createElement("button");
@@ -675,6 +686,7 @@ async function renderTakes() {
     remove.addEventListener("click", async () => {
       if (!confirm(`Delete "${saved.name}"? This cannot be undone.`)) return;
       await deleteTake(saved.id);
+      forgetTake(saved);
       // The take stays on the player, now unsaved.
       if (saved.id === current?.id) current = null;
       updateSaveButton();
@@ -685,6 +697,93 @@ async function renderTakes() {
     list.append(item);
   }
 }
+
+// ─── Google Drive ───────────────────────────────────────────────────────────
+
+let lastSync = null;
+let syncing = false;
+
+function updateDrive(status) {
+  show($("drive"), driveConfigured);
+  if (!driveConfigured) return;
+  const account = driveAccount();
+  $("drive-sync").textContent = account ? "Sync now" : "Connect Google Drive";
+  $("drive-sync").disabled = syncing;
+  show($("drive-disconnect"), Boolean(account) && !syncing);
+  if (status) $("drive-status").textContent = status;
+  else if (!account) $("drive-status").textContent = "Keep your takes in your Google Drive too, to open them in any browser.";
+  else if (driveConnected() && lastSync) {
+    $("drive-status").textContent = `Synced with ${account.email}'s Drive at ${timeFormat.format(lastSync)}. New changes go up as you make them.`;
+  } else {
+    $("drive-status").textContent = `Linked to ${account.email}'s Drive. Press Sync now to bring your takes up to date.`;
+  }
+}
+
+const timeFormat = new Intl.DateTimeFormat(undefined, { timeStyle: "short" });
+
+function describeSync({ uploaded, downloaded, updated, deleted }) {
+  const parts = [];
+  if (uploaded) parts.push(`${uploaded} sent to Drive`);
+  if (downloaded) parts.push(`${downloaded} brought from Drive`);
+  if (updated) parts.push(`${updated} updated`);
+  if (deleted) parts.push(`${deleted} deleted on another device`);
+  return parts.length ? `Takes: ${parts.join(", ")}.` : "Everything was already up to date.";
+}
+
+$("drive-sync").addEventListener("click", async () => {
+  syncing = true;
+  updateDrive("Connecting to Google Drive…");
+  try {
+    if (!driveConnected()) await connectDrive();
+    updateDrive("Syncing…");
+    const counts = await syncTakes();
+    lastSync = Date.now();
+    syncing = false;
+    updateDrive();
+    $("drive-status").textContent += ` ${describeSync(counts)}`;
+  } catch (error) {
+    syncing = false;
+    updateDrive(`Could not sync: ${error.message}`);
+  }
+  await afterRemoteChange();
+});
+
+$("drive-disconnect").addEventListener("click", async () => {
+  if (!confirm("Stop syncing with Google Drive in this browser? Your takes stay here and in your Drive.")) return;
+  await disconnectDrive();
+  lastSync = null;
+  updateDrive();
+  renderTakes();
+});
+
+/// Sends a new or changed take to Drive in the background.
+function sendToDrive(id) {
+  if (!driveConnected()) {
+    if (driveAccount()) updateDrive();
+    return;
+  }
+  pushTake(id)
+    .then(() => {
+      lastSync = Date.now();
+      updateDrive();
+      renderTakes();
+    })
+    .catch((error) => updateDrive(`Not sent to Drive yet (${error.message}). Sync now to retry.`));
+}
+
+/// The take on the player may have been renamed or deleted by a sync.
+async function afterRemoteChange() {
+  if (current) {
+    const saved = await getTake(current.id);
+    if (!saved) current = null;
+    else current.name = saved.name;
+    updateSaveButton();
+  }
+  renderTakes();
+}
+
+preloadDrive().catch(() => {});
+updateDrive();
 
 async function openTake(id) {
   if (recorder) return;
