@@ -75,12 +75,28 @@
             title="Hear the take without any effect, to compare">
             Bypass all
           </button>
-          <button id="download" type="button"
-            class="ml-auto rounded-lg border border-stone-300 px-3 py-1.5 text-sm font-medium hover:border-amber-500 dark:border-stone-700">
-            Download .wav
-          </button>
+          <div class="ml-auto flex flex-wrap gap-2">
+            <button id="save-take" type="button"
+              class="rounded-lg bg-amber-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-amber-700 disabled:cursor-default disabled:bg-transparent disabled:text-stone-500 disabled:ring-1 disabled:ring-stone-300 dark:disabled:ring-stone-700">
+              Save take
+            </button>
+            <button id="download" type="button"
+              class="rounded-lg border border-stone-300 px-3 py-1.5 text-sm font-medium hover:border-amber-500 dark:border-stone-700">
+              Download .wav
+            </button>
+          </div>
         </div>
         <p class="text-xs text-stone-500">Headphones carry the low notes best; small speakers barely play them.</p>
+      </div>
+
+      <div class="space-y-2 border-t border-stone-200 pt-4 dark:border-stone-800">
+        <div class="flex flex-wrap items-baseline justify-between gap-2">
+          <h3 class="font-semibold">Saved takes</h3>
+          <p class="text-xs text-stone-500">Kept in this browser with the controls you saved them with.</p>
+        </div>
+        <p id="takes-message" class="hidden rounded-lg bg-red-50 px-3 py-2 text-sm text-red-800 dark:bg-red-950 dark:text-red-200" role="alert"></p>
+        <p id="takes-empty" class="text-sm text-stone-500">No saved takes yet. Record one and press <span class="font-medium">Save take</span>.</p>
+        <ul id="takes" class="space-y-2"></ul>
       </div>
     </section>
 
