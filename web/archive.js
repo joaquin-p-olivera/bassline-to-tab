@@ -76,7 +76,7 @@ export function exportSongs(songs) {
 /// Reads an archive made by exportSongs and returns the song records.
 /// Throws an Error with a readable message if the file is not an archive.
 export async function importSongs(file) {
-  const notArchive = new Error("This file is not a song history exported by Bassline to Tab.");
+  const notArchive = new Error("This file is not a song history exported by Bass & Guitar to Tab (Bassline to Tab).");
   if (file.size < HEADER_SIZE) throw notArchive;
   const header = new Uint8Array(await file.slice(0, HEADER_SIZE).arrayBuffer());
   if (new TextDecoder().decode(header.subarray(0, MAGIC.length)) !== MAGIC) throw notArchive;

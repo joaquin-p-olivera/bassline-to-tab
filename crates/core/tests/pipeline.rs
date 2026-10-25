@@ -3,10 +3,12 @@
 
 use bassline_core::analysis::estimate_tempo;
 use bassline_core::fretboard::FingeringStyle;
+use bassline_core::instrument::Instrument;
 use bassline_core::model::{BasicPitch, SAMPLE_RATE};
 use bassline_core::notes::{decode_notes, to_monophonic, DecodeParams};
 use bassline_core::onsets::refine_onsets;
 use bassline_core::pipeline::{transcribe, Options};
+use bassline_core::tuning::Tuning;
 
 const BPM: f64 = 100.0;
 const LEAD_IN_S: f64 = 0.5;
@@ -32,11 +34,16 @@ fn pluck(frequency: f64, seconds: f64) -> Vec<f32> {
 }
 
 fn synthesize_riff(repeats: usize) -> Vec<f32> {
+    synthesize_transposed_riff(repeats, 0)
+}
+
+/// The riff moved by `semitones` (12 puts it on the low E of a guitar).
+fn synthesize_transposed_riff(repeats: usize, semitones: u8) -> Vec<f32> {
     let eighth = 60.0 / BPM / 2.0;
     let mut audio = vec![0.0f32; (LEAD_IN_S * f64::from(SAMPLE_RATE)) as usize];
     for _ in 0..repeats {
         for (pitch, length) in RIFF {
-            let frequency = 440.0 * 2f64.powf((f64::from(pitch) - 69.0) / 12.0);
+            let frequency = 440.0 * 2f64.powf((f64::from(pitch + semitones) - 69.0) / 12.0);
             audio.extend(pluck(frequency, length as f64 * eighth));
         }
     }
@@ -88,4 +95,26 @@ fn pipeline_produces_a_playable_tab() {
     let e_string = lower.lines().find(|l| l.starts_with("E|")).unwrap();
     assert!(e_string.starts_with("E|0-------0---3---5-------7---8---"), "got {e_string}");
     assert!(result.midi.starts_with(b"MThd"));
+}
+
+#[test]
+fn transcribes_a_guitar_riff_on_six_strings() {
+    let audio = synthesize_transposed_riff(2, 12);
+    let model = BasicPitch::load().unwrap();
+    let options = Options {
+        instrument: Instrument::Guitar,
+        tuning: Tuning::from_spec("guitar-standard").unwrap(),
+        ..Options::default()
+    };
+    let result = transcribe(&model, &audio, &options, &mut |_, _| {}).unwrap();
+
+    let detected: Vec<u8> = result.notes.iter().map(|n| n.played_pitch).collect();
+    let expected: Vec<u8> = (0..2).flat_map(|_| RIFF.iter().map(|(pitch, _)| pitch + 12)).collect();
+    assert_eq!(detected, expected);
+    let open = &result.fingering(FingeringStyle::OpenPosition).tab;
+    let lines: Vec<&str> = open.lines().collect();
+    // Highest string on top, written as a lowercase e; the low E at the bottom.
+    assert!(lines[1].starts_with("e|"), "got {open}");
+    let low_e = lines.iter().find(|l| l.starts_with("E|")).unwrap();
+    assert!(low_e.starts_with("E|0-------0---3---"), "got {low_e}");
 }

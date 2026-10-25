@@ -9,8 +9,18 @@ import { TabView } from "./tab-view.js";
 const SEPARATION_SAMPLE_RATE = 44100;
 /// Bars per line in the downloadable .txt tab.
 const TEXT_TAB_BARS_PER_LINE = 4;
-/// localStorage key for the "save the bass compressed" choice.
+/// localStorage key for the "save the separated tracks compressed" choice.
 const COMPRESS_BASS_KEY = "bassline-to-tab.compressBass";
+/// Where each instrument's separated stem, last result and options live in a
+/// song record. The bass keeps the field names from before guitar existed.
+const SONG_FIELDS = {
+  bass: { stem: "bassWav", result: "lastResult", options: "lastOptions" },
+  guitar: { stem: "guitarWav", result: "guitarResult", options: "guitarOptions" },
+};
+const INSTRUMENTS = Object.keys(SONG_FIELDS);
+/// Demucs models: the 4-stem one has no guitar.
+const BASS_MODEL = "htdemucs";
+const GUITAR_MODEL = "htdemucs_6s";
 
 const $ = (id) => document.getElementById(id);
 
@@ -26,9 +36,13 @@ new ResizeObserver(([entry]) =>
 
 /// The song being worked on: a history record (see storage.js).
 let currentSong = null;
+/// The transcriptions of the current song, by instrument.
+let currentResults = {};
+let currentInstrument = "bass";
 let currentResult = null;
 let fingeringStyle = "open-position";
-let playerUrls = { bass: null, mix: null };
+let playerUrls = { bass: null, guitar: null, mix: null };
+let currentSource = "mix";
 
 // ─── Worker ─────────────────────────────────────────────────────────────────
 
@@ -115,7 +129,7 @@ function describeProgress({ stage, done, total }) {
     case "download":
       return `Downloading the Demucs model: ${(done / 1e6).toFixed(0)} / ${(total / 1e6).toFixed(0)} MB`;
     case "separate":
-      return `Separating the bass: chunk ${done} of ${total}`;
+      return `Separating: chunk ${done} of ${total}`;
     case "transcribe":
       return `Detecting notes: window ${done} of ${total}`;
     default:
@@ -123,15 +137,39 @@ function describeProgress({ stage, done, total }) {
   }
 }
 
-function tuningValue() {
-  const selected = $("tuning").value;
-  return selected === "custom" ? $("tuning-custom").value.trim() : selected;
+function tuningValue(instrument) {
+  const [select, custom] = instrument === "guitar" ? ["guitar-tuning", "guitar-tuning-custom"] : ["tuning", "tuning-custom"];
+  const selected = $(select).value;
+  return selected === "custom" ? $(custom).value.trim() : selected;
 }
 
-function readOptions() {
+/// "bass", "guitar" or "both", as chosen in the form.
+function instrumentChoice() {
+  return form.querySelector('input[name="instrument"]:checked')?.value ?? "bass";
+}
+
+function selectedInstruments() {
+  const choice = instrumentChoice();
+  return choice === "both" ? [...INSTRUMENTS] : [choice];
+}
+
+function setInstrumentChoice(choice) {
+  const input = form.querySelector(`input[name="instrument"][value="${choice}"]`);
+  if (input) input.checked = true;
+  showTuningFields();
+}
+
+function showTuningFields() {
+  const instruments = selectedInstruments();
+  show($("bass-tuning-field"), instruments.includes("bass"));
+  show($("guitar-tuning-field"), instruments.includes("guitar"));
+}
+
+function readOptions(instrument) {
   const bpm = parseFloat($("bpm").value);
   return {
-    tuning: tuningValue(),
+    instrument,
+    tuning: tuningValue(instrument),
     frets: parseInt($("frets").value, 10) || 24,
     bpm: Number.isFinite(bpm) ? bpm : null,
     onsetThreshold: parseFloat($("onset-threshold").value),
@@ -246,20 +284,24 @@ async function hasWebGpu() {
 
 function setPlayerSources(song) {
   for (const url of Object.values(playerUrls)) if (url) URL.revokeObjectURL(url);
-  playerUrls = {
-    bass: song.bassWav ? URL.createObjectURL(song.bassWav) : null,
-    mix: URL.createObjectURL(song.file),
-  };
+  playerUrls = { mix: URL.createObjectURL(song.file) };
+  for (const instrument of INSTRUMENTS) {
+    const stem = song[SONG_FIELDS[instrument].stem];
+    playerUrls[instrument] = stem ? URL.createObjectURL(stem) : null;
+  }
   for (const button of document.querySelectorAll(".source-button")) {
     button.disabled = !playerUrls[button.dataset.source];
     button.classList.toggle("opacity-40", button.disabled);
+    // Without a guitar stem the button only adds noise.
+    if (button.dataset.source === "guitar") show(button, !button.disabled);
   }
-  selectSource(playerUrls.bass ? "bass" : "mix");
+  selectSource(playerUrls[currentInstrument] ? currentInstrument : "mix");
 }
 
 function selectSource(source) {
   const url = playerUrls[source];
   if (!url) return;
+  currentSource = source;
   const resumeAt = player.currentTime;
   const wasPlaying = !player.paused;
   if (player.src !== url) {
@@ -304,7 +346,7 @@ function renderSummary(result) {
   const items = [
     ["Tempo", `${result.bpm.toFixed(1)} BPM`],
     ["Notes", String(result.notes.length)],
-    ["Bass tuning", result.tuning],
+    [currentInstrument === "guitar" ? "Guitar tuning" : "Bass tuning", result.tuning],
     ["Recording tuning", tuning],
   ];
   $("summary").replaceChildren(
@@ -363,14 +405,48 @@ document.querySelectorAll(".fingering-button").forEach((button) => {
   });
 });
 
-function showResult(song, result, timings = []) {
-  currentResult = result;
-  renderSummary(result);
+/// Shows the song's transcriptions, starting with `preferred` if it has one.
+function showResult(song, timings = [], preferred = currentInstrument) {
+  currentResults = {};
+  for (const instrument of INSTRUMENTS) {
+    const result = song[SONG_FIELDS[instrument].result];
+    if (result) currentResults[instrument] = result;
+  }
+  const available = Object.keys(currentResults);
+  if (!available.length) {
+    show($("result"), false);
+    return;
+  }
+  currentInstrument = available.includes(preferred) ? preferred : available[0];
   show($("result"), true);
   setPlayerSources(song);
-  renderFingering();
+  renderInstrument();
   $("timings").textContent = timings.map(([label, value]) => `${label}: ${value}`).join(" · ");
 }
+
+function renderInstrument() {
+  currentResult = currentResults[currentInstrument];
+  show($("instrument-toggle"), Object.keys(currentResults).length > 1);
+  for (const button of document.querySelectorAll(".instrument-button")) {
+    const active = button.dataset.instrument === currentInstrument;
+    button.disabled = !currentResults[button.dataset.instrument];
+    button.classList.toggle("bg-amber-600", active);
+    button.classList.toggle("text-white", active);
+  }
+  renderSummary(currentResult);
+  renderFingering();
+}
+
+document.querySelectorAll(".instrument-button").forEach((button) =>
+  button.addEventListener("click", () => {
+    const instrument = button.dataset.instrument;
+    if (!currentResults[instrument] || instrument === currentInstrument) return;
+    currentInstrument = instrument;
+    // Listening to one instrument alone, follow the switch to the other.
+    if (currentSource !== "mix" && playerUrls[instrument]) selectSource(instrument);
+    renderInstrument();
+  }),
+);
 
 // ─── History ────────────────────────────────────────────────────────────────
 
@@ -378,8 +454,10 @@ function selectSong(song) {
   currentSong = song;
   fileInput.value = "";
   $("file-label").textContent = `${song.name} (from your songs)`;
-  // With a saved bass stem, "separate" reuses it instantly.
-  $("separate").checked = Boolean(song.bassWav) || song.separated;
+  // With a saved stem, "separate" reuses it instantly.
+  $("separate").checked = INSTRUMENTS.some((i) => song[SONG_FIELDS[i].stem]) || song.separated;
+  const transcribed = INSTRUMENTS.filter((i) => song[SONG_FIELDS[i].result]);
+  if (transcribed.length) setInstrumentChoice(transcribed.length > 1 ? "both" : transcribed[0]);
 }
 
 async function openSong(id) {
@@ -387,11 +465,7 @@ async function openSong(id) {
   if (!song) return;
   selectSong(song);
   show($("status"), false);
-  if (song.lastResult) {
-    showResult(song, song.lastResult, [["Opened from your songs", "no processing"]]);
-  } else {
-    show($("result"), false);
-  }
+  showResult(song, [["Opened from your songs", "no processing"]]);
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
@@ -408,7 +482,7 @@ function historyItem(song) {
   meta.textContent = [
     new Date(song.createdAt).toLocaleDateString(),
     song.duration ? formatDuration(song.duration) : null,
-    song.bassWav ? `bass separated (${describeBass(song.bassWav)})` : "not separated",
+    ...describeStems(song),
   ]
     .filter(Boolean)
     .join(" · ");
@@ -436,8 +510,12 @@ function historyItem(song) {
   return item;
 }
 
-function describeBass(blob) {
-  return `${isOpusBlob(blob) ? "Opus" : "WAV"}, ${(blob.size / 1e6).toFixed(1)} MB`;
+function describeStems(song) {
+  const stems = INSTRUMENTS.filter((i) => song[SONG_FIELDS[i].stem]).map((instrument) => {
+    const blob = song[SONG_FIELDS[instrument].stem];
+    return `${instrument} separated (${isOpusBlob(blob) ? "Opus" : "WAV"}, ${(blob.size / 1e6).toFixed(1)} MB)`;
+  });
+  return stems.length ? stems : ["not separated"];
 }
 
 function describeStorage({ usage, quota, persisted }) {
@@ -505,24 +583,37 @@ async function importHistory(file) {
 
 // ─── Main flow ──────────────────────────────────────────────────────────────
 
-/// Returns the audio to transcribe (stereo at its own rate) and updates the song record.
-async function prepareSource(song, separate, timings, onProgress) {
-  if (separate && song.bassWav) {
-    setStatus("Loading the saved bass…");
-    const bass = await decodeBlob(song.bassWav, SEPARATION_SAMPLE_RATE);
-    timings.push(["Separation", "reused"]);
-    // Songs saved as WAV are compressed the first time they are reused with
-    // compression on. The transcription still reads the WAV this once.
-    if (compressBass() && !isOpusBlob(song.bassWav)) {
-      setStatus("Compressing the saved bass…");
-      try {
-        song.bassWav = await opusBlob(bass.left, bass.right, bass.sampleRate);
-        await saveSong(song);
-      } catch (error) {
-        console.warn("Could not compress the saved bass, keeping the WAV", error);
-      }
+/// Decodes a saved stem. Stems saved as WAV are compressed the first time
+/// they are reused with compression on; the transcription still reads the
+/// WAV this once.
+async function loadSavedStem(song, instrument) {
+  const field = SONG_FIELDS[instrument].stem;
+  setStatus(`Loading the saved ${instrument}…`);
+  const stem = await decodeBlob(song[field], SEPARATION_SAMPLE_RATE);
+  if (compressBass() && !isOpusBlob(song[field])) {
+    setStatus(`Compressing the saved ${instrument}…`);
+    try {
+      song[field] = await opusBlob(stem.left, stem.right, stem.sampleRate);
+      await saveSong(song);
+    } catch (error) {
+      console.warn(`Could not compress the saved ${instrument}, keeping the WAV`, error);
     }
-    return bass;
+  }
+  return stem;
+}
+
+/// Returns the audio to transcribe for each instrument (stereo at its own
+/// rate) and updates the song record.
+async function prepareSources(song, instruments, separate, timings, onProgress) {
+  const sources = {};
+  if (separate) {
+    for (const instrument of instruments) {
+      if (song[SONG_FIELDS[instrument].stem]) sources[instrument] = await loadSavedStem(song, instrument);
+    }
+    if (instruments.every((instrument) => sources[instrument])) {
+      timings.push(["Separation", "reused"]);
+      return sources;
+    }
   }
 
   setStatus("Decoding audio…");
@@ -531,25 +622,36 @@ async function prepareSource(song, separate, timings, onProgress) {
   const mix = await decodeBlob(song.file, SEPARATION_SAMPLE_RATE);
   song.duration = mix.duration;
   timings.push(["Decode", formatSeconds((performance.now() - started) / 1000)]);
-  if (!separate) return mix;
+  if (!separate) {
+    for (const instrument of instruments) sources[instrument] = mix;
+    return sources;
+  }
 
-  setStatus("Separating the bass with Demucs…", { detail: "Preparing the GPU…" });
+  const missing = instruments.filter((instrument) => !sources[instrument]);
+  const model = missing.includes("guitar") ? GUITAR_MODEL : BASS_MODEL;
+  // The 6-stem model separates the bass too: keep it if the song has none,
+  // so transcribing the bass later needs no second separation.
+  const stems = model === GUITAR_MODEL && !song.bassWav && !missing.includes("bass") ? [...missing, "bass"] : missing;
+  setStatus(`Separating the ${missing.join(" and ")} with Demucs…`, { detail: "Preparing the GPU…" });
   const separated = await callWorker(
     "separate",
-    { left: mix.left, right: mix.right, sampleRate: mix.sampleRate },
+    { model, stems, left: mix.left, right: mix.right, sampleRate: mix.sampleRate },
     [mix.left.buffer, mix.right.buffer],
     onProgress,
   );
   timings.push(["Separation", formatSeconds(separated.seconds)]);
-  if (compressBass()) setStatus("Compressing the bass…");
-  song.bassWav = await bassBlob(separated.left, separated.right, separated.sampleRate);
+  if (compressBass()) setStatus("Compressing the separated tracks…");
+  for (const [instrument, stem] of Object.entries(separated.stems)) {
+    song[SONG_FIELDS[instrument].stem] = await bassBlob(stem.left, stem.right, separated.sampleRate);
+    if (instruments.includes(instrument)) sources[instrument] = { ...stem, sampleRate: separated.sampleRate };
+  }
   song.separated = true;
   await saveSong(song);
-  return { left: separated.left, right: separated.right, sampleRate: separated.sampleRate };
+  return sources;
 }
 
 async function run(song) {
-  const options = readOptions();
+  const instruments = selectedInstruments();
   const separate = $("separate").checked;
   const timings = [];
   const started = performance.now();
@@ -558,24 +660,29 @@ async function run(song) {
     $("progress").textContent = describeProgress(event);
   };
 
-  const source = await prepareSource(song, separate, timings, onProgress);
+  const sources = await prepareSources(song, instruments, separate, timings, onProgress);
 
-  setStatus("Detecting notes…");
-  setProgress(0);
   const { transcriptionSampleRate } = await callWorker("info");
-  const mono = await toMono(source.left, source.right, source.sampleRate, transcriptionSampleRate);
-  const transcribed = await callWorker("transcribe", { samples: mono, options }, [], onProgress);
-  timings.push(["Transcription", formatSeconds(transcribed.seconds)]);
+  for (const instrument of instruments) {
+    setStatus(instruments.length > 1 ? `Detecting the ${instrument} notes…` : "Detecting notes…");
+    setProgress(0);
+    const options = readOptions(instrument);
+    const source = sources[instrument];
+    const mono = await toMono(source.left, source.right, source.sampleRate, transcriptionSampleRate);
+    const transcribed = await callWorker("transcribe", { samples: mono, options }, [], onProgress);
+    const label = instruments.length > 1 ? `Transcription (${instrument})` : "Transcription";
+    timings.push([label, formatSeconds(transcribed.seconds)]);
+    song[SONG_FIELDS[instrument].options] = options;
+    song[SONG_FIELDS[instrument].result] = transcribed.result;
+  }
   timings.push(["Total", formatSeconds((performance.now() - started) / 1000)]);
 
-  song.lastOptions = options;
-  song.lastResult = transcribed.result;
   song.separated = separate;
   await saveSong(song);
   refreshHistory();
 
   show($("status"), false);
-  showResult(song, transcribed.result, timings);
+  showResult(song, timings, instruments[0]);
 }
 
 async function songForSubmission() {
@@ -583,7 +690,7 @@ async function songForSubmission() {
   if (!file) return currentSong;
   const id = songId(file);
   const saved = await getSong(id);
-  return saved ?? { id, name: file.name, file, createdAt: Date.now(), bassWav: null, separated: false };
+  return saved ?? { id, name: file.name, file, createdAt: Date.now(), bassWav: null, guitarWav: null, separated: false };
 }
 
 form.addEventListener("submit", async (event) => {
@@ -632,11 +739,19 @@ drop.addEventListener("drop", (event) => {
   }
 });
 
-$("tuning").addEventListener("change", () => {
-  const custom = $("tuning").value === "custom";
-  $("tuning-custom").hidden = !custom;
-  $("tuning-custom").required = custom;
-});
+for (const [select, custom] of [
+  ["tuning", "tuning-custom"],
+  ["guitar-tuning", "guitar-tuning-custom"],
+]) {
+  $(select).addEventListener("change", () => {
+    const isCustom = $(select).value === "custom";
+    $(custom).hidden = !isCustom;
+    $(custom).required = isCustom;
+  });
+}
+
+form.querySelectorAll('input[name="instrument"]').forEach((input) => input.addEventListener("change", showTuningFields));
+showTuningFields();
 
 $("onset-threshold").addEventListener("input", () => {
   $("onset-value").textContent = parseFloat($("onset-threshold").value).toFixed(2);
@@ -683,19 +798,24 @@ $("import-history").addEventListener("change", async () => {
 $("download-tab").addEventListener("click", () => {
   if (currentResult) {
     const { style, tab } = currentFingering();
-    const suffix = style === "open-position" ? "" : `.${style}`;
+    const suffix = (currentInstrument === "guitar" ? ".guitar" : "") + (style === "open-position" ? "" : `.${style}`);
     download(`${baseName(currentSong?.name ?? "bassline")}${suffix}.tab.txt`, new Blob([tab], { type: "text/plain" }));
   }
 });
 
 $("download-midi").addEventListener("click", () => {
   if (currentResult) {
-    download(`${baseName(currentSong?.name ?? "bassline")}.mid`, new Blob([currentResult.midi], { type: "audio/midi" }));
+    const suffix = currentInstrument === "guitar" ? ".guitar" : "";
+    const midi = new Blob([currentResult.midi], { type: "audio/midi" });
+    download(`${baseName(currentSong?.name ?? "bassline")}${suffix}.mid`, midi);
   }
 });
 
 callWorker("info")
-  .then(({ weightsSizeMb }) => ($("weights-size").textContent = String(weightsSizeMb)))
+  .then(({ weightsSizeMb, guitarWeightsSizeMb }) => {
+    $("weights-size").textContent = String(weightsSizeMb);
+    $("guitar-weights-size").textContent = String(guitarWeightsSizeMb);
+  })
   .catch((error) => setStatus("Could not start the app", { busy: false, error: error.message }));
 
 hasWebGpu().then((available) => {
@@ -703,7 +823,7 @@ hasWebGpu().then((available) => {
   $("separate").checked = false;
   const warning = $("gpu-warning");
   warning.textContent =
-    "This browser has no WebGPU, so the bass cannot be separated here. You can still transcribe an isolated bass recording.";
+    "This browser has no WebGPU, so the instruments cannot be separated here. You can still transcribe an isolated bass or guitar recording.";
   show(warning, true);
 });
 

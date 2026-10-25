@@ -1,10 +1,11 @@
-//! End-to-end transcription of mono bass audio into tablature.
+//! End-to-end transcription of mono bass or guitar audio into tablature.
 
 use anyhow::{bail, Result};
 use log::{debug, info, warn};
 
 use crate::analysis::{self, Tempo, TuningEstimate};
 use crate::fretboard::{self, FingeringStyle, Position};
+use crate::instrument::Instrument;
 use crate::midi;
 use crate::model::{BasicPitch, MIDI_OFFSET};
 use crate::notes::{self, DecodeParams, Note};
@@ -20,6 +21,7 @@ const MODEL_FRAMES_PER_SECOND: f64 = 86.0;
 /// User-facing transcription settings.
 #[derive(Clone, Debug)]
 pub struct Options {
+    pub instrument: Instrument,
     pub tuning: Tuning,
     pub frets: u8,
     /// Tempo in BPM; estimated from the notes when `None`.
@@ -33,6 +35,7 @@ pub struct Options {
 impl Default for Options {
     fn default() -> Self {
         Self {
+            instrument: Instrument::Bass,
             tuning: Tuning::from_spec("standard").expect("built-in preset"),
             frets: 24,
             bpm: None,
@@ -131,8 +134,12 @@ fn fit_pitches(line: &[Note], options: &Options) -> (Vec<u8>, Option<String>) {
     let warning = (shifted > 0).then(|| {
         format!(
             "{shifted} notes were outside the range of {} and were shifted by octaves; \
-             if the song uses a lower tuning, try Drop D or a 5-string tuning.",
-            options.tuning.describe()
+             if the song uses a lower tuning, try {}.",
+            options.tuning.describe(),
+            match options.instrument {
+                Instrument::Bass => "Drop D or a 5-string tuning",
+                Instrument::Guitar => "Drop D or a lower tuning",
+            }
         )
     });
     (played, warning)
@@ -154,7 +161,7 @@ pub fn transcribe(
     options: &Options,
     progress: &mut dyn FnMut(usize, usize),
 ) -> Result<Transcription> {
-    info!("Bass tuning: {} ({} frets)", options.tuning.describe(), options.frets);
+    info!("{:?} tuning: {} ({} frets)", options.instrument, options.tuning.describe(), options.frets);
     let posteriorgram = model.run_with_progress(samples, progress)?;
 
     let raw = notes::decode_notes(&posteriorgram, &decode_params(options));
@@ -168,8 +175,10 @@ pub fn transcribe(
         );
     }
     let mut line = notes::to_monophonic(&raw);
-    let octave_fixes = notes::correct_octaves(&mut line, &posteriorgram, options.tuning.lowest());
-    info!("Moved {octave_fixes} notes down an octave (harmonic detected instead of the fundamental)");
+    if options.instrument.corrects_octaves() {
+        let octave_fixes = notes::correct_octaves(&mut line, &posteriorgram, options.tuning.lowest());
+        info!("Moved {octave_fixes} notes down an octave (harmonic detected instead of the fundamental)");
+    }
     let refine_stats = onsets::refine_onsets(&mut line, samples, crate::model::SAMPLE_RATE);
     info!(
         "Detected {} notes ({} raw; {} onsets refined, {} pre-echoes dropped)",
@@ -179,7 +188,10 @@ pub fn transcribe(
         refine_stats.dropped
     );
     if line.is_empty() {
-        bail!("No notes were detected. Try a lower onset threshold, or check that the audio contains bass.");
+        bail!(
+            "No notes were detected. Try a lower onset threshold, or check that the audio contains {}.",
+            options.instrument.name()
+        );
     }
 
     let mut warnings = Vec::new();
@@ -196,7 +208,7 @@ pub fn transcribe(
     }
 
     let fingerings = FingeringStyle::ALL.iter().map(|style| finger(&line, &played, &tempo, options, *style)).collect();
-    let midi = midi::encode(&line, tempo.bpm)?;
+    let midi = midi::encode(&line, tempo.bpm, options.instrument)?;
 
     let notes = line.into_iter().zip(played).map(|(note, played_pitch)| TabNote { note, played_pitch }).collect();
     Ok(Transcription {

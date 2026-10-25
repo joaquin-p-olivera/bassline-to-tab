@@ -1,7 +1,10 @@
 # bassline-to-tab
 
-Choose a song, get its bass line as tablature. It runs entirely in the
-browser, on your own device: no server, no uploads, no install.
+Choose a song, get its bass line (or its guitar line, or both) as tablature.
+It runs entirely in the browser, on your own device: no server, no uploads,
+no install. The app is called **Bass & Guitar to Tab**; guitar is a first
+version (proof of concept): one note at a time, so riffs and solos work,
+chords do not yet.
 
 **App:** https://joaquin-p-olivera.github.io/bassline-to-tab/
 
@@ -38,11 +41,16 @@ Features:
   the browser (IndexedDB). Reopening a song or changing the settings reuses
   the separated bass, so transcribing again takes seconds instead of minutes.
 - The tab wraps to the screen width (no horizontal scrolling).
+- **Bass, guitar or both**: guitar uses the 6-stem HTDemucs model
+  (`htdemucs_6s`, another ~84 MB download), which also separates the bass, so
+  both stems are saved after one separation. Guitar tunings: standard, Drop D,
+  half step down, D standard, Drop C, open G, DADGAD or custom. The guitar
+  line skips the bass octave correction (it is calibrated on bass harmonics).
 
 | Part | Where | What |
 | --- | --- | --- |
 | `crates/core` | Rust | Platform-agnostic transcription: Basic Pitch inference (ONNX via [tract](https://github.com/sonos/tract), model embedded), note decoding, onset refinement, tuning and tempo estimation, fret assignment, ASCII tab, MIDI. |
-| `crates/web` | Rust → wasm | `wasm-bindgen` bindings: `separate_bass` (HTDemucs via [demucs-rs](https://github.com/nikhilunni/demucs-rs) on WebGPU) and `transcribe`. |
+| `crates/web` | Rust → wasm | `wasm-bindgen` bindings: `separate` (HTDemucs via [demucs-rs](https://github.com/nikhilunni/demucs-rs) on WebGPU) and `transcribe`. |
 | `web/` | HTML/JS | The page (`index.html`, `app.js`), the worker (`worker.js`), the interactive tab (`tab-view.js`), the song history and saved amp takes (`storage.js`), its export/import file (`archive.js`) and the optional Opus compression of the bass (`opus.js`), the fretboard page with every fret's note (`fretboard.html`, `fretboard.js`), the bass amp page that plays a microphone take through a compressor, a drive pedal and an EQ and can save takes with their settings, synced with Google Drive (`amp.html`, `amp.js`, `drive-sync.js`, `drive-config.js`), and the light/dark toggle every page shares (`theme.js`, saved in `localStorage`, defaulting to the system setting). |
 | `scripts/build-web.sh` | Bash | Builds the wasm module and assembles the site. |
 | `.github/workflows/web.yml` | CI | On every push: builds the wasm (with clippy) and runs the end-to-end tests in headless Chromium. |
@@ -109,7 +117,9 @@ with its binary values replaced by references into the data section:
 
 Everything else is plain JSON. The field keeps the name `bassWav` whatever
 the format, so older files and apps read both. A song without a separated bass has
-`"bassWav": null`; one never transcribed has no `lastResult`.
+`"bassWav": null`; one never transcribed has no `lastResult`. Guitar uses
+the same shape in `guitarWav`, `guitarOptions` and `guitarResult` (absent in
+songs from before guitar existed); the options carry `"instrument"`.
 
 ### Reading and writing
 
