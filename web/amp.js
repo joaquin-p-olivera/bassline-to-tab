@@ -1,9 +1,11 @@
 // Bass amp page: records the bass with the microphone, then plays the take
 // through a compressor, a drive pedal and a three-band amp EQ (all Web Audio
 // nodes), so the controls change the sound while it plays. The same chain,
-// built on an OfflineAudioContext, renders the .wav download.
+// built on an OfflineAudioContext, renders the .wav download. Takes can be
+// saved in IndexedDB (storage.js) together with the controls' settings.
 
 import { openInput, setupInputSelect } from "./audio-input.js";
+import { deleteTake, getTake, listTakes, saveTake } from "./storage.js";
 
 const SETTINGS_KEY = "amp.settings";
 const MAX_RECORD_SECONDS = 120;
@@ -88,15 +90,19 @@ function formatTime(seconds) {
 
 // ─── Settings ───────────────────────────────────────────────────────────────
 
+/// Settings from stored data, keeping only known keys of the right type.
+function sanitized(saved) {
+  const settings = { ...DEFAULTS };
+  for (const key of Object.keys(DEFAULTS)) {
+    if (typeof saved?.[key] === typeof DEFAULTS[key]) settings[key] = saved[key];
+  }
+  if (!DRIVES[settings.driveType]) settings.driveType = DEFAULTS.driveType;
+  return settings;
+}
+
 function loadSettings() {
   try {
-    const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? "{}");
-    const settings = { ...DEFAULTS };
-    for (const key of Object.keys(DEFAULTS)) {
-      if (typeof saved[key] === typeof DEFAULTS[key]) settings[key] = saved[key];
-    }
-    if (!DRIVES[settings.driveType]) settings.driveType = DEFAULTS.driveType;
-    return settings;
+    return sanitized(JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? "{}"));
   } catch {
     return { ...DEFAULTS };
   }
@@ -257,6 +263,7 @@ function applySettings() {
   saveSettings();
   if (chain) chain.apply(settings, { bypassAll });
   drawStatic();
+  updateSaveButton();
 }
 
 // ─── Recording ──────────────────────────────────────────────────────────────
@@ -313,7 +320,7 @@ async function startRecording() {
     try {
       const blob = new Blob(chunks, { type: mediaRecorder.mimeType });
       const decoded = await ctx.decodeAudioData(await blob.arrayBuffer());
-      setTake(normalized(ctx, decoded));
+      setTake(normalized(ctx, decoded), { audio: blob });
     } catch (error) {
       showMicError(`Could not read the recording: ${error.message}`);
     }
@@ -364,8 +371,14 @@ function normalized(ctx, decoded) {
   return buffer;
 }
 
-function setTake(buffer) {
+/// `saved` is the stored take this one was opened from; a new recording
+/// passes only its audio and stays unsaved until "Save take".
+function setTake(buffer, { audio, saved = null }) {
   take = buffer;
+  takeAudio = audio;
+  current = saved ? { id: saved.id, name: saved.name, settingsKey: JSON.stringify(saved.settings) } : null;
+  updateSaveButton();
+  renderTakes();
   playback.offset = 0;
   $("duration").textContent = formatTime(buffer.duration);
   $("position").textContent = "0:00";
@@ -497,7 +510,7 @@ $("download").addEventListener("click", async () => {
     const rendered = await offline.startRendering();
     const link = document.createElement("a");
     link.href = URL.createObjectURL(wavBlob(rendered));
-    link.download = "bass-amp.wav";
+    link.download = `${fileName(current?.name ?? "bass-amp")}.wav`;
     link.click();
     setTimeout(() => URL.revokeObjectURL(link.href), 10_000);
   } finally {
@@ -505,6 +518,10 @@ $("download").addEventListener("click", async () => {
     button.textContent = "Download .wav";
   }
 });
+
+function fileName(name) {
+  return name.replace(/[\\/:*?"<>|]+/g, "-").trim() || "bass-amp";
+}
 
 /// 16-bit mono PCM WAV.
 function wavBlob(buffer) {
@@ -529,6 +546,167 @@ function wavBlob(buffer) {
     view.setInt16(44 + i * 2, v < 0 ? v * 0x8000 : v * 0x7fff, true);
   }
   return new Blob([view], { type: "audio/wav" });
+}
+
+// ─── Saved takes ────────────────────────────────────────────────────────────
+
+/// The recording as it came from the microphone (stored as is: compressed,
+/// so a two-minute take is about a megabyte).
+let takeAudio = null;
+/// The saved take on the player, if any: its id, name and the settings it
+/// was last saved with (as JSON, to tell whether the controls changed).
+let current = null;
+
+$("save-take").addEventListener("click", async () => {
+  if (!take) return;
+  const button = $("save-take");
+  button.disabled = true;
+  const snapshot = { ...settings };
+  let ok;
+  if (current) {
+    ok = await saveTake({ id: current.id, settings: snapshot });
+  } else {
+    const record = {
+      id: crypto.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      name: await nextTakeName(),
+      createdAt: Date.now(),
+      duration: take.duration,
+      audio: takeAudio,
+      settings: snapshot,
+    };
+    ok = await saveTake(record);
+    if (ok) current = { id: record.id, name: record.name };
+  }
+  if (ok) current.settingsKey = JSON.stringify(snapshot);
+  else takesMessage("Could not save the take: this browser is not letting the page store data (private window?).");
+  updateSaveButton();
+  renderTakes();
+});
+
+async function nextTakeName() {
+  const used = (await listTakes()).map((t) => Number(/^Take (\d+)$/.exec(t.name)?.[1] ?? 0));
+  return `Take ${Math.max(0, ...used) + 1}`;
+}
+
+/// "Save take" for a new recording; "Save sound" once the controls differ
+/// from what the open take was saved with; "Saved" otherwise.
+function updateSaveButton() {
+  const button = $("save-take");
+  if (!current) {
+    button.textContent = "Save take";
+    button.disabled = !take;
+    button.title = "Keep this take in the browser, with the current controls";
+  } else if (JSON.stringify(settings) !== current.settingsKey) {
+    button.textContent = "Save sound";
+    button.disabled = false;
+    button.title = `Store the current controls with "${current.name}"`;
+  } else {
+    button.textContent = "Saved ✓";
+    button.disabled = true;
+    button.title = `"${current.name}" is saved with these controls`;
+  }
+}
+
+function takesMessage(text) {
+  $("takes-message").textContent = text;
+  show($("takes-message"), Boolean(text));
+}
+
+function soundSummary(s) {
+  const parts = [];
+  if (s?.compOn) parts.push("Compressor");
+  if (s?.driveOn) parts.push(s.driveType[0].toUpperCase() + s.driveType.slice(1));
+  return parts.length ? parts.join(" + ") : "Clean";
+}
+
+const dateFormat = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" });
+
+async function renderTakes() {
+  const takes = await listTakes();
+  const list = $("takes");
+  list.replaceChildren();
+  show($("takes-empty"), takes.length === 0);
+  for (const saved of takes) {
+    const isCurrent = saved.id === current?.id;
+    const item = document.createElement("li");
+    item.className =
+      "flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border px-3 py-2 " +
+      (isCurrent ? "border-amber-500 bg-amber-50 dark:bg-amber-950/40" : "border-stone-200 dark:border-stone-800");
+
+    const details = document.createElement("div");
+    details.className = "min-w-0 flex-1";
+    const name = document.createElement("input");
+    name.type = "text";
+    name.value = saved.name;
+    name.maxLength = 80;
+    name.setAttribute("aria-label", "Take name");
+    name.className =
+      "w-full min-w-0 rounded border border-transparent bg-transparent px-1 py-0.5 font-medium hover:border-stone-300 focus:border-amber-500 focus:outline-none dark:hover:border-stone-700";
+    name.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") name.blur();
+    });
+    name.addEventListener("change", async () => {
+      const value = name.value.trim() || saved.name;
+      name.value = value;
+      await saveTake({ id: saved.id, name: value });
+      if (saved.id === current?.id) {
+        current.name = value;
+        updateSaveButton();
+      }
+      saved.name = value;
+    });
+    const meta = document.createElement("p");
+    meta.className = "px-1 text-xs text-stone-500";
+    meta.textContent = `${formatTime(saved.duration)} · ${dateFormat.format(saved.createdAt)} · ${soundSummary(saved.settings)}`;
+    details.append(name, meta);
+
+    const open = document.createElement("button");
+    open.type = "button";
+    open.textContent = isCurrent ? "On the player" : "Open";
+    open.disabled = isCurrent;
+    open.className =
+      "rounded-lg border border-stone-300 px-3 py-1.5 text-sm font-medium hover:border-amber-500 disabled:cursor-default disabled:opacity-50 dark:border-stone-700";
+    open.addEventListener("click", () => openTake(saved.id));
+
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.textContent = "Delete";
+    remove.className = "rounded-lg px-2 py-1.5 text-sm text-stone-500 underline hover:text-red-700 dark:hover:text-red-400";
+    remove.addEventListener("click", async () => {
+      if (!confirm(`Delete "${saved.name}"? This cannot be undone.`)) return;
+      await deleteTake(saved.id);
+      // The take stays on the player, now unsaved.
+      if (saved.id === current?.id) current = null;
+      updateSaveButton();
+      renderTakes();
+    });
+
+    item.append(details, open, remove);
+    list.append(item);
+  }
+}
+
+async function openTake(id) {
+  if (recorder) return;
+  takesMessage("");
+  const saved = await getTake(id);
+  if (!saved) {
+    takesMessage("That take is no longer saved.");
+    renderTakes();
+    return;
+  }
+  const ctx = context();
+  stopPlayback();
+  try {
+    const decoded = await ctx.decodeAudioData(await saved.audio.arrayBuffer());
+    settings = sanitized(saved.settings);
+    syncControls();
+    setTake(normalized(ctx, decoded), { audio: saved.audio, saved: { ...saved, settings } });
+    applySettings();
+    $("record").textContent = "Record again";
+  } catch (error) {
+    takesMessage(`Could not open "${saved.name}": ${error.message}`);
+  }
 }
 
 // ─── Controls ───────────────────────────────────────────────────────────────
@@ -1006,3 +1184,4 @@ new MutationObserver(redrawAll).observe(document.documentElement, { attributes: 
 
 syncControls();
 drawStatic();
+renderTakes();

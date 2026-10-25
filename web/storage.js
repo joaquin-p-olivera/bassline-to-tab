@@ -1,14 +1,19 @@
 // Song history in IndexedDB: the original file, the separated bass and the
 // last transcription, so nothing is lost on reload and changing settings
-// does not require running Demucs again.
+// does not require running Demucs again. The same database keeps the takes
+// saved on the amp page.
 //
-// Record shape:
+// Song record shape ("songs" store):
 //   { id, name, createdAt, duration, file: File, bassWav: Blob | null,
 //     separated: boolean, lastOptions, lastResult }
+//
+// Amp take record shape ("amp-takes" store):
+//   { id, name, createdAt, duration, audio: Blob (as recorded), settings }
 
 const DB_NAME = "bassline-to-tab";
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const STORE = "songs";
+const TAKES_STORE = "amp-takes";
 
 let dbPromise = null;
 
@@ -25,21 +30,29 @@ function openDb() {
       const request = indexedDB.open(DB_NAME, DB_VERSION);
       request.onupgradeneeded = () => {
         const db = request.result;
-        if (!db.objectStoreNames.contains(STORE)) {
-          db.createObjectStore(STORE, { keyPath: "id" });
+        for (const name of [STORE, TAKES_STORE]) {
+          if (!db.objectStoreNames.contains(name)) db.createObjectStore(name, { keyPath: "id" });
         }
       };
-      request.onsuccess = () => resolve(request.result);
+      request.onsuccess = () => {
+        const db = request.result;
+        // Another tab opening a newer version waits until this one lets go.
+        db.onversionchange = () => {
+          db.close();
+          dbPromise = null;
+        };
+        resolve(db);
+      };
       request.onerror = () => reject(request.error);
     });
   }
   return dbPromise;
 }
 
-async function withStore(mode, action) {
+async function withStore(mode, action, storeName = STORE) {
   const db = await openDb();
-  const transaction = db.transaction(STORE, mode);
-  const result = await requestToPromise(action(transaction.objectStore(STORE)));
+  const transaction = db.transaction(storeName, mode);
+  const result = await requestToPromise(action(transaction.objectStore(storeName)));
   await new Promise((resolve, reject) => {
     transaction.oncomplete = resolve;
     transaction.onerror = () => reject(transaction.error);
@@ -106,6 +119,49 @@ export async function putSongs(records) {
     transaction.onabort = () => reject(transaction.error);
   });
   navigator.storage?.persist?.().catch(() => {});
+}
+
+// ─── Amp takes ──────────────────────────────────────────────────────────────
+
+/// Saves (or merges into) an amp take. Returns false if storage failed.
+export async function saveTake(record) {
+  try {
+    const existing = (await withStore("readonly", (store) => store.get(record.id), TAKES_STORE)) ?? {};
+    await withStore("readwrite", (store) => store.put({ ...existing, ...record }), TAKES_STORE);
+    navigator.storage?.persist?.().catch(() => {});
+    return true;
+  } catch (error) {
+    console.warn("Could not save the take", error);
+    return false;
+  }
+}
+
+export async function getTake(id) {
+  try {
+    return await withStore("readonly", (store) => store.get(id), TAKES_STORE);
+  } catch (error) {
+    console.warn("Saved takes unavailable", error);
+    return undefined;
+  }
+}
+
+/// Newest first.
+export async function listTakes() {
+  try {
+    const takes = await withStore("readonly", (store) => store.getAll(), TAKES_STORE);
+    return takes.sort((a, b) => b.createdAt - a.createdAt);
+  } catch (error) {
+    console.warn("Saved takes unavailable", error);
+    return [];
+  }
+}
+
+export async function deleteTake(id) {
+  try {
+    await withStore("readwrite", (store) => store.delete(id), TAKES_STORE);
+  } catch (error) {
+    console.warn("Could not delete the take", error);
+  }
 }
 
 /// Bytes used by this site (history + cached model) and available to it, and
