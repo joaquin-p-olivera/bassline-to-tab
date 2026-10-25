@@ -43,7 +43,7 @@ Features:
 | --- | --- | --- |
 | `crates/core` | Rust | Platform-agnostic transcription: Basic Pitch inference (ONNX via [tract](https://github.com/sonos/tract), model embedded), note decoding, onset refinement, tuning and tempo estimation, fret assignment, ASCII tab, MIDI. |
 | `crates/web` | Rust → wasm | `wasm-bindgen` bindings: `separate_bass` (HTDemucs via [demucs-rs](https://github.com/nikhilunni/demucs-rs) on WebGPU) and `transcribe`. |
-| `web/` | HTML/JS | The page (`index.html`, `app.js`), the worker (`worker.js`), the interactive tab (`tab-view.js`), the song history and saved amp takes (`storage.js`) and its export/import file (`archive.js`), the fretboard page with every fret's note (`fretboard.html`, `fretboard.js`), the bass amp page that plays a microphone take through a compressor, a drive pedal and an EQ and can save takes with their settings, synced with Google Drive (`amp.html`, `amp.js`, `drive-sync.js`, `drive-config.js`), and the light/dark toggle every page shares (`theme.js`, saved in `localStorage`, defaulting to the system setting). |
+| `web/` | HTML/JS | The page (`index.html`, `app.js`), the worker (`worker.js`), the interactive tab (`tab-view.js`), the song history and saved amp takes (`storage.js`), its export/import file (`archive.js`) and the optional Opus compression of the bass (`opus.js`), the fretboard page with every fret's note (`fretboard.html`, `fretboard.js`), the bass amp page that plays a microphone take through a compressor, a drive pedal and an EQ and can save takes with their settings, synced with Google Drive (`amp.html`, `amp.js`, `drive-sync.js`, `drive-config.js`), and the light/dark toggle every page shares (`theme.js`, saved in `localStorage`, defaulting to the system setting). |
 | `scripts/build-web.sh` | Bash | Builds the wasm module and assembles the site. |
 | `.github/workflows/web.yml` | CI | On every push: builds the wasm (with clippy) and runs the end-to-end tests in headless Chromium. |
 | `.github/workflows/deploy.yml` | CI | Manual only (Actions → Deploy to GitHub Pages → Run workflow): builds and tests a branch, then deploys it to GitHub Pages. Branches other than `main` need `confirm_non_main: yes`. |
@@ -101,12 +101,14 @@ Each song is the IndexedDB record (see [`web/storage.js`](web/storage.js))
 with its binary values replaced by references into the data section:
 
 - `{"$blob": {offset, size, type, name?, lastModified?}}`: a Blob (the bass
-  stem, a 16-bit mono WAV). With `name` and `lastModified` it is a File (the
+  stem: a 16-bit mono WAV with `type` `audio/wav`, or a mono Ogg Opus with
+  `type` `audio/ogg` when it was saved compressed). With `name` and `lastModified` it is a File (the
   original audio), which keeps the song's `id` stable.
 - `{"$bytes": {offset, size, kind}}`: a typed array (the MIDI), where `kind`
   is its type (`Uint8Array`, `Float32Array`, …) or `ArrayBuffer`.
 
-Everything else is plain JSON. A song without a separated bass has
+Everything else is plain JSON. The field keeps the name `bassWav` whatever
+the format, so older files and apps read both. A song without a separated bass has
 `"bassWav": null`; one never transcribed has no `lastResult`.
 
 ### Reading and writing
