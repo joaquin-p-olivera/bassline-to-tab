@@ -146,8 +146,10 @@ the Drive API directly (`web/drive-sync.js`).
 
 ### Setting up the OAuth client (once)
 
-The controls stay hidden until `GOOGLE_CLIENT_ID` in `web/drive-config.js`
-is set. To create it:
+The controls stay hidden until the site is built with a client ID. It is
+not kept in the code: CI reads the **`GOOGLE_CLIENT_ID` repository
+variable** and `scripts/build-web.sh` writes it into the published
+`drive-config.js` (the file in `web/` stays empty). To create it:
 
 1. In [Google Cloud Console](https://console.cloud.google.com/), create a
    project (e.g. "Bassline to Tab").
@@ -159,9 +161,14 @@ is set. To create it:
 4. **Clients → Create client**: type **Web application**, authorized
    JavaScript origins `https://joaquin-p-olivera.github.io` (and
    `http://localhost:8000` for local testing). No redirect URI is needed.
-5. Paste the client ID (`….apps.googleusercontent.com`) into
-   `web/drive-config.js`. It is not a secret: Google only accepts it from the
-   listed origins.
+5. In the repository, **Settings → Secrets and variables → Actions →
+   Variables → New repository variable**: name `GOOGLE_CLIENT_ID`, value the
+   client ID (`….apps.googleusercontent.com`). Then deploy (Actions → Deploy
+   to GitHub Pages). It is a variable and not a secret because the browser
+   needs it, so anyone can read it in the published page; that is expected:
+   Google only accepts it from the listed origins.
+6. To try it locally, build with it in the environment:
+   `GOOGLE_CLIENT_ID=… scripts/build-web.sh` and serve `_site`.
 
 ## Browser support
 
