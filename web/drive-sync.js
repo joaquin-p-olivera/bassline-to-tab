@@ -1,18 +1,10 @@
-// Keeps the amp's saved takes in the user's Google Drive, so they follow the
-// Google account to any browser. Everything runs in the page: Google Identity
-// Services gives an access token and the Drive REST API stores the files.
+// Syncs the amp's saved takes with the user's Google Drive, straight from the
+// page (Google Identity Services + Drive REST API). How takes are stored on
+// Drive: README, "Google Drive sync".
 //
-// Each take is one audio file in a "Bassline to Tab · amp takes" folder,
-// playable from Drive. Its `appProperties` hold the take's id and its
-// `description` the rest of the record as JSON (name, date, duration,
-// settings, updatedAt). The `drive.file` scope only reaches files this app
-// created, never the rest of the Drive.
-//
-// Local takes remember the Drive file they were synced to (`driveFileId`).
-// Syncing then reads as: on Drive and not here → download; here and never
-// synced → upload; synced before but gone from Drive → deleted elsewhere,
-// delete here; on both → the newer `updatedAt` wins for name and settings
-// (the audio never changes).
+// A local take remembers its Drive file (`driveFileId`): that is how a sync
+// tells a take deleted on another device (linked, gone from Drive) from a new
+// one (never linked). When both sides have it, the newer `updatedAt` wins.
 
 import { GOOGLE_CLIENT_ID } from "./drive-config.js";
 import { deleteTake, getTake, listTakes, saveTake } from "./storage.js";
