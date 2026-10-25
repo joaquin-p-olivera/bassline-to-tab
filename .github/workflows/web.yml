@@ -29,6 +29,10 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   WASM_BINDGEN_VERSION: 0.2.129
+  # OAuth client for the amp's Google Drive sync, from the repository
+  # variable (Settings → Secrets and variables → Actions → Variables).
+  # build-web.sh writes it into the site's drive-config.js.
+  GOOGLE_CLIENT_ID: ${{ vars.GOOGLE_CLIENT_ID }}
 
 jobs:
   build:

@@ -62,7 +62,7 @@ sequenceDiagram
     User->>Page: choose file, Transcribe
     Page->>DB: getSong(id)
     alt bass already saved
-        DB-->>Page: bass stem (WAV)
+        DB-->>Page: bass stem (WAV or Opus)
     else new song
         Page->>Page: decodeBlob (stereo 44.1 kHz)
         Page->>Worker: separate (left, right)
@@ -277,7 +277,8 @@ position as soon as that is cheaper overall.
 | --- | --- | --- |
 | Interactive tab | `web/tab-view.js`: `TabView` | Lays bars out to fit the container width (no horizontal scrolling), shrinks the font on narrow screens, highlights the current sixteenth from the audio time, seeks on click. |
 | Playback | `web/app.js`: `setPlayerSources`, `selectSource`, `followPlayback` | One `<audio>` element switching between the bass stem and the original mix; a `requestAnimationFrame` loop drives the cursor. |
-| History | `web/storage.js`: `saveSong`, `getSong`, `listSongs`, `deleteSong` | IndexedDB records with the original file, the bass stem (16-bit mono WAV) and the last transcription, so re-transcribing reuses the bass. |
+| History | `web/storage.js`: `saveSong`, `getSong`, `listSongs`, `deleteSong` | IndexedDB records with the original file, the bass stem and the last transcription, so re-transcribing reuses the bass. |
+| Compressed bass | `web/opus.js`: `encodeOpus`; `web/app.js`: `bassBlob` | Optional (checkbox "Save the separated bass compressed"): the stem is saved as 128 kbps mono Opus in an Ogg container (WebCodecs `AudioEncoder` + our own Ogg pages) instead of 16-bit mono WAV, about five times smaller. It is decoded once before saving, and falls back to WAV if that fails or the browser has no Opus encoder. Songs saved as WAV are compressed the next time their bass is reused with the option on. |
 | History backup | `web/archive.js`: `exportSongs`, `importSongs` | One `.bltab` file with every song: an 8-byte magic, a JSON manifest and the files and MIDI back to back. Import merges into the history, asking whether to replace songs that are already there. |
 | Microphone | `web/app.js`: `startRecording`, `stopRecording`; `web/recorder-worklet.js` | Opens the input picked in the shared selector (`web/audio-input.js`: raw input, no echo cancellation, noise suppression or auto gain); an AudioWorklet copies raw PCM to the main thread, which draws a peak meter and, on stop, saves a 16-bit mono WAV as a new song (`source: "microphone"`, not separated) and transcribes it. |
 | Flow | `web/app.js`: `run`, `prepareSource` | Decode → separate (or reuse the saved bass) → resample → transcribe → save → show. |
