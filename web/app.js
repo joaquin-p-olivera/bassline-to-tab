@@ -2,12 +2,15 @@
 // to the worker. The heavy lifting (Demucs, Basic Pitch) runs in worker.js.
 
 import { ARCHIVE_EXTENSION, exportSongs, importSongs } from "./archive.js";
+import { encodeOpus, isOpusBlob, OPUS_SAMPLE_RATE, opusSupported } from "./opus.js";
 import { deleteSong, getSong, listSongs, putSongs, saveSong, songId, storageInfo } from "./storage.js";
 import { TabView } from "./tab-view.js";
 
 const SEPARATION_SAMPLE_RATE = 44100;
 /// Bars per line in the downloadable .txt tab.
 const TEXT_TAB_BARS_PER_LINE = 4;
+/// localStorage key for the "save the bass compressed" choice.
+const COMPRESS_BASS_KEY = "bassline-to-tab.compressBass";
 
 const $ = (id) => document.getElementById(id);
 
@@ -176,7 +179,7 @@ async function toMono(left, right, fromRate, toRate) {
   return rendered.getChannelData(0);
 }
 
-/// 16-bit mono WAV; the bass stem is stored this way to keep the history small.
+/// 16-bit mono WAV: the lossless way to store the bass stem.
 function monoWavBlob(left, right, sampleRate) {
   const frames = left.length;
   const view = new DataView(new ArrayBuffer(44 + frames * 2));
@@ -199,6 +202,36 @@ function monoWavBlob(left, right, sampleRate) {
     view.setInt16(44 + i * 2, sample * 0x7fff, true);
   }
   return new Blob([view], { type: "audio/wav" });
+}
+
+/// Mono Ogg Opus of the bass stem, about a fifth of the WAV. It is decoded
+/// back once before being kept, so a browser that encodes but cannot read it
+/// falls back to WAV instead of losing the bass.
+async function opusBlob(left, right, sampleRate) {
+  const mono = await toMono(left, right, sampleRate, OPUS_SAMPLE_RATE);
+  const blob = await encodeOpus(mono, sampleRate);
+  const decoded = await decodeBlob(blob, sampleRate);
+  if (Math.abs(decoded.duration - left.length / sampleRate) > 0.1) {
+    throw new Error(`The compressed bass lasts ${decoded.duration.toFixed(2)} s instead of ${(left.length / sampleRate).toFixed(2)} s`);
+  }
+  return blob;
+}
+
+/// The bass stem as stored in the history: Opus if the user chose it and it
+/// works here, WAV otherwise.
+async function bassBlob(left, right, sampleRate) {
+  if (compressBass()) {
+    try {
+      return await opusBlob(left, right, sampleRate);
+    } catch (error) {
+      console.warn("Could not compress the bass, saving it as WAV", error);
+    }
+  }
+  return monoWavBlob(left, right, sampleRate);
+}
+
+function compressBass() {
+  return $("compress-bass").checked && !$("compress-bass").disabled;
 }
 
 async function hasWebGpu() {
@@ -375,7 +408,7 @@ function historyItem(song) {
   meta.textContent = [
     new Date(song.createdAt).toLocaleDateString(),
     song.duration ? formatDuration(song.duration) : null,
-    song.bassWav ? "bass separated" : "not separated",
+    song.bassWav ? `bass separated (${describeBass(song.bassWav)})` : "not separated",
   ]
     .filter(Boolean)
     .join(" · ");
@@ -401,6 +434,10 @@ function historyItem(song) {
   actions.append(open, remove);
   item.append(info, actions);
   return item;
+}
+
+function describeBass(blob) {
+  return `${isOpusBlob(blob) ? "Opus" : "WAV"}, ${(blob.size / 1e6).toFixed(1)} MB`;
 }
 
 function describeStorage({ usage, quota, persisted }) {
@@ -474,6 +511,17 @@ async function prepareSource(song, separate, timings, onProgress) {
     setStatus("Loading the saved bass…");
     const bass = await decodeBlob(song.bassWav, SEPARATION_SAMPLE_RATE);
     timings.push(["Separation", "reused"]);
+    // Songs saved as WAV are compressed the first time they are reused with
+    // compression on. The transcription still reads the WAV this once.
+    if (compressBass() && !isOpusBlob(song.bassWav)) {
+      setStatus("Compressing the saved bass…");
+      try {
+        song.bassWav = await opusBlob(bass.left, bass.right, bass.sampleRate);
+        await saveSong(song);
+      } catch (error) {
+        console.warn("Could not compress the saved bass, keeping the WAV", error);
+      }
+    }
     return bass;
   }
 
@@ -493,7 +541,8 @@ async function prepareSource(song, separate, timings, onProgress) {
     onProgress,
   );
   timings.push(["Separation", formatSeconds(separated.seconds)]);
-  song.bassWav = monoWavBlob(separated.left, separated.right, separated.sampleRate);
+  if (compressBass()) setStatus("Compressing the bass…");
+  song.bassWav = await bassBlob(separated.left, separated.right, separated.sampleRate);
   song.separated = true;
   await saveSong(song);
   return { left: separated.left, right: separated.right, sampleRate: separated.sampleRate };
@@ -598,6 +647,29 @@ $("copy").addEventListener("click", async () => {
   await navigator.clipboard.writeText(currentFingering().tab);
   $("copy").textContent = "Copied";
   setTimeout(() => ($("copy").textContent = "Copy"), 1500);
+});
+
+$("compress-bass").addEventListener("change", () => {
+  try {
+    localStorage.setItem(COMPRESS_BASS_KEY, $("compress-bass").checked ? "1" : "0");
+  } catch {
+    // Not saved in a private window; the choice lasts until reload.
+  }
+});
+
+opusSupported().then((supported) => {
+  const checkbox = $("compress-bass");
+  if (!supported) {
+    checkbox.checked = false;
+    checkbox.disabled = true;
+    $("compress-bass-hint").textContent = "This browser cannot encode Opus, so the bass is saved as WAV.";
+    return;
+  }
+  try {
+    checkbox.checked = localStorage.getItem(COMPRESS_BASS_KEY) === "1";
+  } catch {
+    // Storage blocked: keep the default (off).
+  }
 });
 
 $("export-history").addEventListener("click", exportHistory);
