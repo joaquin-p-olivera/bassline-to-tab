@@ -175,6 +175,7 @@ function readOptions(instrument) {
     onsetThreshold: parseFloat($("onset-threshold").value),
     minNoteMs: parseFloat($("min-note").value) || 80,
     barsPerLine: TEXT_TAB_BARS_PER_LINE,
+    chords: instrument === "guitar" && $("guitar-chords").checked,
   };
 }
 

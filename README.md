@@ -3,8 +3,7 @@
 Choose a song, get its bass line (or its guitar line, or both) as tablature.
 It runs entirely in the browser, on your own device: no server, no uploads,
 no install. The app is called **Bass & Guitar to Tab**; guitar is a first
-version (proof of concept): one note at a time, so riffs and solos work,
-chords do not yet.
+version (proof of concept), with chords.
 
 **App:** https://joaquin-p-olivera.github.io/bassline-to-tab/
 
@@ -46,6 +45,11 @@ Features:
   both stems are saved after one separation. Guitar tunings: standard, Drop D,
   half step down, D standard, Drop C, open G, DADGAD or custom. The guitar
   line skips the bass octave correction (it is calibrated on bass harmonics).
+- **Chords** (guitar, "Detect chords", on by default): notes that start within
+  50 ms form a chord; weak notes and likely overtones are dropped. Each chord
+  gets a playable shape (one note per string, fretted notes within 4 frets),
+  chosen with the same Viterbi as single notes so that shapes stay close to
+  each other. Off, the guitar is reduced to one note at a time like the bass.
 
 | Part | Where | What |
 | --- | --- | --- |

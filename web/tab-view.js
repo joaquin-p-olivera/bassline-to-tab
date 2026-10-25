@@ -119,7 +119,12 @@ export class TabView {
     this.stepsPerBar = stepsPerBar;
     this.stepSeconds = 60 / bpm / stepsPerBeat;
     this.barCount = events.length ? Math.floor(events[events.length - 1].step / stepsPerBar) + 1 : 1;
-    this.byStep = new Map(events.map((event) => [event.step, event]));
+    // Several events on one step are a chord.
+    this.byStep = new Map();
+    for (const event of events) {
+      if (!this.byStep.has(event.step)) this.byStep.set(event.step, []);
+      this.byStep.get(event.step).push(event);
+    }
     this.cells = Array.from({ length: this.barCount }, (_, bar) => {
       const frets = events.filter((e) => Math.floor(e.step / stepsPerBar) === bar).map((e) => e.fret);
       return cellWidth(frets);
@@ -140,8 +145,8 @@ export class TabView {
       for (let i = 0; i < line.barCount; i++) {
         const bar = line.firstBar + i;
         for (let s = bar * this.stepsPerBar; s < (bar + 1) * this.stepsPerBar; s++) {
-          const event = this.byStep.get(s);
-          const cell = event && event.string === string ? String(event.fret) : "";
+          const event = this.byStep.get(s)?.find((e) => e.string === string);
+          const cell = event ? String(event.fret) : "";
           row += cell.padEnd(this.cells[bar], "-");
         }
         row += "|";

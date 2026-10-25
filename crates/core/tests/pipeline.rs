@@ -118,3 +118,51 @@ fn transcribes_a_guitar_riff_on_six_strings() {
     let low_e = lines.iter().find(|l| l.starts_with("E|")).unwrap();
     assert!(low_e.starts_with("E|0-------0---3---"), "got {low_e}");
 }
+
+/// Power chords (root, fifth, octave), one per half note at [`BPM`].
+fn synthesize_power_chords(roots: &[u8]) -> Vec<f32> {
+    let half = 60.0 / BPM * 2.0;
+    let mut audio = vec![0.0f32; (LEAD_IN_S * f64::from(SAMPLE_RATE)) as usize];
+    for root in roots {
+        let mut chord = vec![0.0f32; (half * f64::from(SAMPLE_RATE)) as usize];
+        for pitch in [*root, root + 7, root + 12] {
+            let frequency = 440.0 * 2f64.powf((f64::from(pitch) - 69.0) / 12.0);
+            for (sample, tone) in chord.iter_mut().zip(pluck(frequency, half)) {
+                *sample += tone;
+            }
+        }
+        audio.extend(chord);
+    }
+    audio.extend(vec![0.0f32; SAMPLE_RATE as usize]);
+    audio
+}
+
+#[test]
+fn transcribes_guitar_power_chords() {
+    // E5 G5 A5 E5, twice.
+    let roots = [40, 43, 45, 40, 40, 43, 45, 40];
+    let audio = synthesize_power_chords(&roots);
+    let model = BasicPitch::load().unwrap();
+    let options = Options {
+        instrument: Instrument::Guitar,
+        tuning: Tuning::from_spec("guitar-standard").unwrap(),
+        chords: true,
+        bpm: Some(BPM),
+        ..Options::default()
+    };
+    let result = transcribe(&model, &audio, &options, &mut |_, _| {}).unwrap();
+
+    let fingering = result.fingering(FingeringStyle::LowerStrings);
+    let mut chords: Vec<Vec<u8>> = Vec::new();
+    let mut last_step = None;
+    for event in &fingering.events {
+        if last_step != Some(event.step) {
+            chords.push(Vec::new());
+            last_step = Some(event.step);
+        }
+        let open = options.tuning.strings()[event.position.string];
+        chords.last_mut().unwrap().push(open + event.position.fret);
+    }
+    let expected: Vec<Vec<u8>> = roots.iter().map(|r| vec![*r, r + 7, r + 12]).collect();
+    assert_eq!(chords, expected, "tab:\n{}", fingering.tab);
+}

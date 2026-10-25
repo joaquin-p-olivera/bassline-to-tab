@@ -86,6 +86,7 @@ struct JsOptions {
     frame_threshold: Option<f32>,
     min_note_ms: Option<f64>,
     bars_per_line: Option<usize>,
+    chords: Option<bool>,
 }
 
 impl JsOptions {
@@ -101,6 +102,7 @@ impl JsOptions {
             frame_threshold: self.frame_threshold.unwrap_or(defaults.frame_threshold),
             min_note_ms: self.min_note_ms.unwrap_or(defaults.min_note_ms),
             bars_per_line: self.bars_per_line.unwrap_or(defaults.bars_per_line).max(1),
+            chords: self.chords.unwrap_or(defaults.chords),
         })
     }
 }
@@ -295,7 +297,7 @@ pub async fn separate(
 /// Transcribes mono bass or guitar audio at [`transcription_sample_rate`] into tablature.
 ///
 /// `options`: `{ instrument?, tuning, frets?, bpm?, onsetThreshold?, frameThreshold?,
-/// minNoteMs?, barsPerLine? }`. `on_progress(done, total)` reports model progress.
+/// minNoteMs?, barsPerLine?, chords? }`. `on_progress(done, total)` reports model progress.
 #[wasm_bindgen]
 pub fn transcribe(
     samples: &[f32],

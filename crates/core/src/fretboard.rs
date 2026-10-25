@@ -26,6 +26,12 @@ const MOVE_COST: f32 = 0.1;
 const STRING_CROSS_COST: f32 = 0.3;
 /// Flat cost of an open string (no hand needed, but less control).
 const OPEN_STRING_COST: f32 = 0.3;
+/// Widest distance between fretted notes of one chord shape, in frets.
+const CHORD_SPAN: u8 = 4;
+/// Cost per fret of a chord shape's width: compact shapes are easier.
+const CHORD_SPAN_COST: f32 = 0.15;
+/// Cheapest shapes kept per chord, to bound the search on big chords.
+const MAX_SHAPES_PER_CHORD: usize = 64;
 
 /// How the bassist is assumed to play when a pitch fits on several strings.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -171,6 +177,125 @@ pub fn assign_positions(pitches: &[u8], tuning: &Tuning, max_fret: u8, style: Fi
     result
 }
 
+/// One way to play a chord: a position for each of its notes, in order.
+#[derive(Clone, Debug)]
+struct Shape {
+    positions: Vec<Position>,
+    cost: f32,
+    /// Where the hand is: the lowest fretted position (an open string if
+    /// the shape has no fretted notes). Moves between chords are costed
+    /// from here, as single notes are.
+    anchor: Position,
+}
+
+/// Every playable shape of `chord` (pitches, low to high): one note per
+/// string, fretted notes within [`CHORD_SPAN`]. The cheapest ones first.
+fn chord_shapes(chord: &[u8], tuning: &Tuning, max_fret: u8, weights: Weights) -> Vec<Shape> {
+    fn search(candidates: &[Vec<Position>], chosen: &mut Vec<Position>, out: &mut Vec<Vec<Position>>) {
+        let Some(options) = candidates.get(chosen.len()) else {
+            out.push(chosen.clone());
+            return;
+        };
+        for position in options {
+            if chosen.iter().any(|p| p.string == position.string) {
+                continue;
+            }
+            let fretted = chosen.iter().chain([position]).filter(|p| p.fret > 0).map(|p| p.fret);
+            let (low, high) = fretted.fold((u8::MAX, 0), |(lo, hi), f| (lo.min(f), hi.max(f)));
+            if high > 0 && high - low > CHORD_SPAN {
+                continue;
+            }
+            chosen.push(*position);
+            search(candidates, chosen, out);
+            chosen.pop();
+        }
+    }
+
+    let candidates: Vec<Vec<Position>> = chord.iter().map(|p| candidate_positions(*p, tuning, max_fret)).collect();
+    let mut found = Vec::new();
+    search(&candidates, &mut Vec::with_capacity(chord.len()), &mut found);
+    let mut shapes: Vec<Shape> = found
+        .into_iter()
+        .map(|positions| {
+            let fretted: Vec<u8> = positions.iter().filter(|p| p.fret > 0).map(|p| p.fret).collect();
+            let span = fretted.iter().max().zip(fretted.iter().min()).map_or(0, |(hi, lo)| hi - lo);
+            let mean = positions.iter().map(|p| position_cost(*p, weights)).sum::<f32>() / positions.len() as f32;
+            let anchor = positions
+                .iter()
+                .filter(|p| p.fret > 0)
+                .min_by_key(|p| (p.fret, p.string))
+                .or_else(|| positions.first())
+                .copied()
+                .expect("a chord has notes");
+            Shape { cost: mean + CHORD_SPAN_COST * f32::from(span), positions, anchor }
+        })
+        .collect();
+    shapes.sort_by(|a, b| a.cost.total_cmp(&b.cost));
+    shapes.truncate(MAX_SHAPES_PER_CHORD);
+    shapes
+}
+
+/// Like [`assign_positions`], for chords (each a list of pitches, low to
+/// high; a single note is a chord of one). Returns a position per pitch.
+/// When no shape fits a whole chord, its highest notes are left out (`None`)
+/// until one does; the lowest note is the one that carries the harmony.
+pub fn assign_chord_positions(
+    chords: &[Vec<u8>],
+    tuning: &Tuning,
+    max_fret: u8,
+    style: FingeringStyle,
+) -> Vec<Vec<Option<Position>>> {
+    let weights = style.weights();
+    // For each chord, its shapes and how many of its (lowest) notes they cover.
+    let options: Vec<(usize, Vec<Shape>)> = chords
+        .iter()
+        .map(|chord| {
+            (1..=chord.len())
+                .rev()
+                .map(|n| (n, chord_shapes(&chord[..n], tuning, max_fret, weights)))
+                .find(|(_, shapes)| !shapes.is_empty())
+                .unwrap_or((0, Vec::new()))
+        })
+        .collect();
+    let playable: Vec<usize> = (0..chords.len()).filter(|i| !options[*i].1.is_empty()).collect();
+    let mut result: Vec<Vec<Option<Position>>> = chords.iter().map(|chord| vec![None; chord.len()]).collect();
+    let Some(&first) = playable.first() else {
+        return result;
+    };
+
+    // Same Viterbi as for single notes, over shapes instead of positions.
+    let mut costs: Vec<Vec<f32>> = vec![options[first].1.iter().map(|shape| shape.cost).collect()];
+    let mut back: Vec<Vec<usize>> = vec![vec![0; options[first].1.len()]];
+    for window in playable.windows(2) {
+        let (previous, current) = (&options[window[0]].1, &options[window[1]].1);
+        let previous_costs = costs.last().expect("at least one step");
+        let (mut step_costs, mut step_back) = (Vec::with_capacity(current.len()), Vec::with_capacity(current.len()));
+        for to in current {
+            let (best_from, best_cost) = previous
+                .iter()
+                .enumerate()
+                .map(|(i, from)| (i, previous_costs[i] + transition_cost(from.anchor, to.anchor)))
+                .min_by(|a, b| a.1.total_cmp(&b.1))
+                .expect("shapes are non-empty");
+            step_costs.push(best_cost + to.cost);
+            step_back.push(best_from);
+        }
+        costs.push(step_costs);
+        back.push(step_back);
+    }
+
+    let last_costs = costs.last().expect("at least one step");
+    let mut choice = (0..last_costs.len()).min_by(|a, b| last_costs[*a].total_cmp(&last_costs[*b])).expect("non-empty");
+    for (k, &chord_index) in playable.iter().enumerate().rev() {
+        let shape = &options[chord_index].1[choice];
+        for (slot, position) in result[chord_index].iter_mut().zip(&shape.positions) {
+            *slot = Some(*position);
+        }
+        choice = back[k][choice];
+    }
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -278,5 +403,53 @@ mod tests {
         for style in FingeringStyle::ALL {
             assert_eq!(FingeringStyle::from_spec(style.as_spec()).unwrap(), style);
         }
+    }
+
+    fn guitar() -> Tuning {
+        Tuning::from_spec("guitar-standard").unwrap()
+    }
+
+    fn chord_frets(positions: &[Option<Position>]) -> Vec<(usize, u8)> {
+        strings_and_frets(positions)
+    }
+
+    #[test]
+    fn single_notes_as_chords_match_the_note_fingering() {
+        let tuning = standard();
+        let pitches = [52, 52, 40, 43, 45, 40, 43, 45, 40];
+        let chords: Vec<Vec<u8>> = pitches.iter().map(|p| vec![*p]).collect();
+        for style in FingeringStyle::ALL {
+            let notes = assign_positions(&pitches, &tuning, 24, style);
+            let as_chords: Vec<Option<Position>> =
+                assign_chord_positions(&chords, &tuning, 24, style).into_iter().flatten().collect();
+            assert_eq!(notes, as_chords, "{style:?}");
+        }
+    }
+
+    #[test]
+    fn plays_open_chords_in_open_position() {
+        // E major (E2 B2 E3 G#3 B3 E4) and A minor (A2 E3 A3 C4 E4).
+        let chords = vec![vec![40, 47, 52, 56, 59, 64], vec![45, 52, 57, 60, 64]];
+        let positions = assign_chord_positions(&chords, &guitar(), 24, FingeringStyle::OpenPosition);
+        assert_eq!(chord_frets(&positions[0]), vec![(0, 0), (1, 2), (2, 2), (3, 1), (4, 0), (5, 0)]);
+        assert_eq!(chord_frets(&positions[1]), vec![(1, 0), (2, 2), (3, 2), (4, 1), (5, 0)]);
+    }
+
+    #[test]
+    fn keeps_power_chords_on_neighbouring_strings() {
+        // G5 (G2 D3 G3) then A5 (A2 E3 A3): one shape slid up two frets.
+        let chords = vec![vec![43, 50, 55], vec![45, 52, 57]];
+        let positions = assign_chord_positions(&chords, &guitar(), 24, FingeringStyle::LowerStrings);
+        assert_eq!(chord_frets(&positions[0]), vec![(0, 3), (1, 5), (2, 5)]);
+        assert_eq!(chord_frets(&positions[1]), vec![(0, 5), (1, 7), (2, 7)]);
+    }
+
+    #[test]
+    fn leaves_out_the_highest_notes_of_unplayable_chords() {
+        // E2 F2 F#2 G2: four semitones in a row cannot all fit on a 4-string bass.
+        let chords = vec![vec![40, 41, 42, 43, 44]];
+        let positions = assign_chord_positions(&chords, &standard(), 24, FingeringStyle::OpenPosition);
+        assert!(positions[0][0].is_some());
+        assert_eq!(positions[0][4], None);
     }
 }

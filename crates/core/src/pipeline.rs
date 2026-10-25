@@ -30,6 +30,9 @@ pub struct Options {
     pub frame_threshold: f32,
     pub min_note_ms: f64,
     pub bars_per_line: usize,
+    /// Keep notes played together as chords instead of reducing the audio
+    /// to one note at a time (meant for guitar).
+    pub chords: bool,
 }
 
 impl Default for Options {
@@ -43,6 +46,7 @@ impl Default for Options {
             frame_threshold: 0.3,
             min_note_ms: 80.0,
             bars_per_line: 4,
+            chords: false,
         }
     }
 }
@@ -71,6 +75,7 @@ pub struct Fingering {
 /// Everything the transcription produced.
 #[derive(Clone, Debug)]
 pub struct Transcription {
+    /// In time order; the notes of a chord are next to each other, low to high.
     pub notes: Vec<TabNote>,
     pub tempo: Tempo,
     pub tuning_estimate: Option<TuningEstimate>,
@@ -153,6 +158,30 @@ fn finger(line: &[Note], played: &[u8], tempo: &Tempo, options: &Options, style:
     Fingering { style, positions, events, tab }
 }
 
+/// Fingers chords (`groups`, with `played` holding the pitches of all their
+/// notes in order) in `style` and renders the tab.
+fn finger_chords(
+    groups: &[Vec<Note>],
+    played: &[u8],
+    tempo: &Tempo,
+    options: &Options,
+    style: FingeringStyle,
+) -> Fingering {
+    let mut remaining = played;
+    let chords: Vec<Vec<u8>> = groups
+        .iter()
+        .map(|group| {
+            let (chord, rest) = remaining.split_at(group.len());
+            remaining = rest;
+            chord.to_vec()
+        })
+        .collect();
+    let by_chord = fretboard::assign_chord_positions(&chords, &options.tuning, options.frets, style);
+    let events = tab::build_chord_events(groups, &by_chord, tempo);
+    let tab = tab::render(&events, &options.tuning, options.bars_per_line);
+    Fingering { style, positions: by_chord.into_iter().flatten().collect(), events, tab }
+}
+
 /// Transcribes mono audio sampled at [`crate::model::SAMPLE_RATE`].
 /// `progress(done, total)` is called as the model processes the audio.
 pub fn transcribe(
@@ -174,15 +203,27 @@ pub fn transcribe(
             note.amplitude
         );
     }
-    let mut line = notes::to_monophonic(&raw);
-    if options.instrument.corrects_octaves() {
-        let octave_fixes = notes::correct_octaves(&mut line, &posteriorgram, options.tuning.lowest());
-        info!("Moved {octave_fixes} notes down an octave (harmonic detected instead of the fundamental)");
-    }
-    let refine_stats = onsets::refine_onsets(&mut line, samples, crate::model::SAMPLE_RATE);
+    // Notes grouped by attack: chords, or one note per group in single-note mode.
+    let (groups, refine_stats) = if options.chords {
+        // Onset refinement and octave correction work on a single line; chords
+        // keep the model's onsets.
+        (notes::to_chords(&raw), RefineStats::default())
+    } else {
+        let mut line = notes::to_monophonic(&raw);
+        if options.instrument.corrects_octaves() {
+            let octave_fixes = notes::correct_octaves(&mut line, &posteriorgram, options.tuning.lowest());
+            info!("Moved {octave_fixes} notes down an octave (harmonic detected instead of the fundamental)");
+        }
+        let refine_stats = onsets::refine_onsets(&mut line, samples, crate::model::SAMPLE_RATE);
+        (line.into_iter().map(|note| vec![note]).collect::<Vec<_>>(), refine_stats)
+    };
+    // The lowest note of each group carries the rhythm; `all` has every note.
+    let line: Vec<Note> = groups.iter().map(|group| group[0].clone()).collect();
+    let all: Vec<Note> = groups.iter().flatten().cloned().collect();
     info!(
-        "Detected {} notes ({} raw; {} onsets refined, {} pre-echoes dropped)",
-        line.len(),
+        "Detected {} notes in {} attacks ({} raw; {} onsets refined, {} pre-echoes dropped)",
+        all.len(),
+        groups.len(),
         raw.len(),
         refine_stats.adjusted,
         refine_stats.dropped
@@ -195,22 +236,31 @@ pub fn transcribe(
     }
 
     let mut warnings = Vec::new();
-    let tuning_estimate = analysis::estimate_tuning(&posteriorgram, &line);
+    let tuning_estimate = analysis::estimate_tuning(&posteriorgram, &all);
     warnings.extend(tuning_warning(tuning_estimate));
 
     let tempo = analysis::estimate_tempo(&line, options.bpm);
     info!("Tempo: {:.1} BPM, grid starts at {:.2} s", tempo.bpm, tempo.origin);
 
-    let (played, range_warning) = fit_pitches(&line, options);
+    let (played, range_warning) = fit_pitches(&all, options);
     warnings.extend(range_warning);
     for warning in &warnings {
         warn!("{warning}");
     }
 
-    let fingerings = FingeringStyle::ALL.iter().map(|style| finger(&line, &played, &tempo, options, *style)).collect();
-    let midi = midi::encode(&line, tempo.bpm, options.instrument)?;
+    let fingerings = FingeringStyle::ALL
+        .iter()
+        .map(|style| {
+            if options.chords {
+                finger_chords(&groups, &played, &tempo, options, *style)
+            } else {
+                finger(&line, &played, &tempo, options, *style)
+            }
+        })
+        .collect();
+    let midi = midi::encode(&all, tempo.bpm, options.instrument)?;
 
-    let notes = line.into_iter().zip(played).map(|(note, played_pitch)| TabNote { note, played_pitch }).collect();
+    let notes = all.into_iter().zip(played).map(|(note, played_pitch)| TabNote { note, played_pitch }).collect();
     Ok(Transcription {
         notes,
         tempo,
