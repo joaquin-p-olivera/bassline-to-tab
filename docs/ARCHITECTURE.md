@@ -44,7 +44,7 @@ static files; there is no backend.
 
 | Thread | Code | Responsibilities |
 | --- | --- | --- |
-| Main thread | `web/app.js`, `web/tab-view.js`, `web/storage.js`, `web/archive.js` | UI, audio decoding and resampling (the Web Audio API only exists here), song history, playback and the tab cursor. |
+| Main thread | `web/app.js`, `web/recorder-worklet.js`, `web/tab-view.js`, `web/storage.js`, `web/archive.js` | UI, audio decoding and resampling (the Web Audio API only exists here), song history, playback and the tab cursor. |
 | Web Worker | `web/worker.js` + `pkg/bassline_web.js` / `.wasm` | Downloads and caches the Demucs weights, runs separation and transcription so the page stays responsive. |
 
 One transcription, end to end:
@@ -280,6 +280,7 @@ position as soon as that is cheaper overall.
 | History | `web/storage.js`: `saveSong`, `getSong`, `listSongs`, `deleteSong` | IndexedDB records with the original file, the bass stem and the last transcription, so re-transcribing reuses the bass. |
 | Compressed bass | `web/opus.js`: `encodeOpus`; `web/app.js`: `bassBlob` | Optional (checkbox "Save the separated bass compressed"): the stem is saved as 128 kbps mono Opus in an Ogg container (WebCodecs `AudioEncoder` + our own Ogg pages) instead of 16-bit mono WAV, about five times smaller. It is decoded once before saving, and falls back to WAV if that fails or the browser has no Opus encoder. Songs saved as WAV are compressed the next time their bass is reused with the option on. |
 | History backup | `web/archive.js`: `exportSongs`, `importSongs` | One `.bltab` file with every song: an 8-byte magic, a JSON manifest and the files and MIDI back to back. Import merges into the history, asking whether to replace songs that are already there. |
+| Microphone | `web/app.js`: `startRecording`, `stopRecording`; `web/recorder-worklet.js` | Opens the input picked in the shared selector (`web/audio-input.js`: raw input, no echo cancellation, noise suppression or auto gain); an AudioWorklet copies raw PCM to the main thread, which draws a peak meter and, on stop, saves a 16-bit mono WAV as a new song (`source: "microphone"`, not separated) and transcribes it. |
 | Flow | `web/app.js`: `run`, `prepareSource` | Decode → separate (or reuse the saved bass) → resample → transcribe → save → show. |
 
 ## Third-party versus own

@@ -2,6 +2,7 @@
 // to the worker. The heavy lifting (Demucs, Basic Pitch) runs in worker.js.
 
 import { ARCHIVE_EXTENSION, exportSongs, importSongs } from "./archive.js";
+import { openInput, setupInputSelect } from "./audio-input.js";
 import { encodeOpus, isOpusBlob, OPUS_SAMPLE_RATE, opusSupported } from "./opus.js";
 import { deleteSong, getSong, listSongs, putSongs, saveSong, songId, storageInfo } from "./storage.js";
 import { TabView } from "./tab-view.js";
@@ -250,6 +251,8 @@ function setPlayerSources(song) {
     bass: song.bassWav ? URL.createObjectURL(song.bassWav) : null,
     mix: URL.createObjectURL(song.file),
   };
+  const mixButton = document.querySelector('.source-button[data-source="mix"]');
+  mixButton.textContent = song.source === "microphone" ? "Recording" : "Full mix";
   for (const button of document.querySelectorAll(".source-button")) {
     button.disabled = !playerUrls[button.dataset.source];
     button.classList.toggle("opacity-40", button.disabled);
@@ -408,7 +411,11 @@ function historyItem(song) {
   meta.textContent = [
     new Date(song.createdAt).toLocaleDateString(),
     song.duration ? formatDuration(song.duration) : null,
-    song.bassWav ? `bass separated (${describeBass(song.bassWav)})` : "not separated",
+    song.source === "microphone"
+      ? "recorded"
+      : song.bassWav
+        ? `bass separated (${describeBass(song.bassWav)})`
+        : "not separated",
   ]
     .filter(Boolean)
     .join(" · ");
@@ -595,6 +602,7 @@ form.addEventListener("submit", async (event) => {
   }
   currentSong = song;
   submitButton.disabled = true;
+  $("record").disabled = true;
   try {
     await run(song);
   } catch (error) {
@@ -605,8 +613,183 @@ form.addEventListener("submit", async (event) => {
     setStatus("Something went wrong", { busy: false, error: error.message || String(error) });
   } finally {
     submitButton.disabled = false;
+    $("record").disabled = false;
   }
 });
+
+// ─── Microphone ─────────────────────────────────────────────────────────────
+
+/// Longer recordings stop on their own (10 minutes of float samples ≈ 115 MB).
+const MAX_RECORDING_SECONDS = 600;
+const MIN_RECORDING_SECONDS = 1;
+/// The level meter shows this range, in dB below full scale.
+const METER_FLOOR_DB = -60;
+/// A peak this close to full scale is clipping: the bass is too loud or too close.
+const CLIP_LEVEL = 0.99;
+/// How fast the meter falls back after a peak, per animation frame.
+const METER_DECAY = 0.92;
+
+/// The open microphone and the samples so far, while recording.
+let recording = null;
+
+function recordMessage(text, { error = false } = {}) {
+  const message = $("record-message");
+  message.textContent = text;
+  message.classList.toggle("text-red-700", error);
+  message.classList.toggle("dark:text-red-400", error);
+  message.classList.toggle("text-stone-500", !error);
+}
+
+function setRecordingUi(active) {
+  $("record").setAttribute("aria-pressed", String(active));
+  $("record-label").textContent = active ? "Stop" : "Record";
+  $("record-dot").classList.toggle("rounded-full", !active);
+  $("record-dot").classList.toggle("rounded-sm", active);
+  $("record-dot").classList.toggle("animate-pulse", active);
+  submitButton.disabled = active;
+  $("audio-input").disabled = active;
+  if (!active) {
+    $("record-level").style.width = "0";
+    $("record-meter").setAttribute("aria-valuenow", "0");
+  }
+}
+
+async function startRecording() {
+  let stream;
+  let fellBack;
+  try {
+    ({ stream, fellBack } = await openInput($("audio-input")));
+  } catch (error) {
+    recordMessage(
+      error.name === "NotAllowedError"
+        ? "The microphone is blocked. Allow it for this page in the browser settings and try again."
+        : `Could not open the microphone: ${error.message}`,
+      { error: true },
+    );
+    return;
+  }
+  const context = new AudioContext();
+  try {
+    await context.audioWorklet.addModule(new URL("./recorder-worklet.js", import.meta.url));
+  } catch (error) {
+    stream.getTracks().forEach((track) => track.stop());
+    context.close();
+    recordMessage(`Could not start recording: ${error.message}`, { error: true });
+    return;
+  }
+  const node = new AudioWorkletNode(context, "recorder");
+  recording = { stream, context, node, chunks: [], frames: 0, peak: 0, level: 0, clipped: false };
+  node.port.onmessage = ({ data }) => {
+    if (!recording) return;
+    recording.chunks.push(data);
+    recording.frames += data.length;
+    for (const sample of data) recording.peak = Math.max(recording.peak, Math.abs(sample));
+  };
+  // The node only runs while connected to the output; a silent gain keeps the
+  // microphone from being played back.
+  context
+    .createMediaStreamSource(stream)
+    .connect(node)
+    .connect(new GainNode(context, { gain: 0 }))
+    .connect(context.destination);
+  // A track ends if the microphone is unplugged or the permission revoked.
+  stream.getTracks()[0].addEventListener("ended", () => stopRecording());
+
+  currentSong = null;
+  fileInput.value = "";
+  $("file-label").textContent = "Recording from the microphone…";
+  setRecordingUi(true);
+  recordMessage(
+    fellBack
+      ? "Recording from the default input: the chosen one is not connected. Press Stop when you are done."
+      : "Recording. Play your bass line, then press Stop.",
+  );
+  requestAnimationFrame(drawRecording);
+}
+
+function drawRecording() {
+  if (!recording) return;
+  const seconds = recording.frames / recording.context.sampleRate;
+  $("record-time").textContent = formatDuration(Math.floor(seconds));
+  if (recording.peak >= CLIP_LEVEL) recording.clipped = true;
+  recording.level = Math.max(recording.peak, recording.level * METER_DECAY);
+  recording.peak = 0;
+  const db = 20 * Math.log10(Math.max(recording.level, 1e-6));
+  const percent = Math.round(Math.max(0, Math.min(1, 1 - db / METER_FLOOR_DB)) * 100);
+  const level = $("record-level");
+  level.style.width = `${percent}%`;
+  level.classList.toggle("bg-red-600", recording.level >= CLIP_LEVEL);
+  level.classList.toggle("bg-green-600", recording.level < CLIP_LEVEL);
+  $("record-meter").setAttribute("aria-valuenow", String(percent));
+  if (seconds >= MAX_RECORDING_SECONDS) {
+    stopRecording();
+    return;
+  }
+  requestAnimationFrame(drawRecording);
+}
+
+async function stopRecording() {
+  if (!recording) return;
+  const { stream, context, node, chunks, frames, clipped } = recording;
+  recording = null;
+  node.port.onmessage = null;
+  stream.getTracks().forEach((track) => track.stop());
+  const sampleRate = context.sampleRate;
+  context.close();
+  setRecordingUi(false);
+
+  const seconds = frames / sampleRate;
+  if (seconds < MIN_RECORDING_SECONDS) {
+    $("file-label").textContent = "Tap to choose a file, or drop it here";
+    recordMessage("The recording was too short. Press Record and play a few notes.", { error: true });
+    return;
+  }
+  const samples = new Float32Array(frames);
+  let offset = 0;
+  for (const chunk of chunks) {
+    samples.set(chunk, offset);
+    offset += chunk.length;
+  }
+
+  const now = new Date();
+  const name = `Recording ${now.toLocaleDateString()} ${now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}.wav`;
+  const file = new File([monoWavBlob(samples, samples, sampleRate)], name, {
+    type: "audio/wav",
+    lastModified: now.getTime(),
+  });
+  const song = {
+    id: songId(file),
+    name,
+    file,
+    createdAt: now.getTime(),
+    duration: seconds,
+    bassWav: null,
+    separated: false,
+    source: "microphone",
+  };
+  // Saved right away, so the recording is kept even if transcription fails.
+  await saveSong(song);
+  refreshHistory();
+  selectSong(song);
+  $("file-label").textContent = `${name} (${formatDuration(seconds)})`;
+  recordMessage(
+    clipped
+      ? "The recording clipped (the meter went red): turn the bass down or move it away for a cleaner tab."
+      : "Recorded and saved in your songs. Transcribing it now.",
+    { error: clipped },
+  );
+  form.requestSubmit();
+}
+
+$("record").addEventListener("click", () => (recording ? stopRecording() : startRecording()));
+setupInputSelect($("audio-input"));
+
+if (!navigator.mediaDevices?.getUserMedia || !window.AudioWorkletNode) {
+  $("record").disabled = true;
+  recordMessage("This browser cannot record from the microphone here (it needs HTTPS and a recent browser).", {
+    error: true,
+  });
+}
 
 // ─── Static UI wiring ───────────────────────────────────────────────────────
 
