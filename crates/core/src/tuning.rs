@@ -1,4 +1,4 @@
-//! Note names, MIDI pitch helpers and bass tuning definitions.
+//! Note names, MIDI pitch helpers and bass and guitar tuning definitions.
 
 use anyhow::{bail, Context, Result};
 
@@ -42,7 +42,7 @@ pub fn parse_pitch(name: &str) -> Result<u8> {
     u8::try_from(pitch).ok().filter(|p| *p <= 127).with_context(|| format!("note '{name}' is outside the MIDI range"))
 }
 
-/// Open-string pitches of a bass, ordered from the lowest string to the highest.
+/// Open-string pitches of a bass or guitar, ordered from the lowest string to the highest.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Tuning {
     strings: Vec<u8>,
@@ -58,6 +58,13 @@ impl Tuning {
             "d-standard" => Some("D1 G1 C2 F2"),
             "five-string" => Some("B0 E1 A1 D2 G2"),
             "six-string" => Some("B0 E1 A1 D2 G2 C3"),
+            "guitar-standard" => Some("E2 A2 D3 G3 B3 E4"),
+            "guitar-drop-d" => Some("D2 A2 D3 G3 B3 E4"),
+            "guitar-half-step-down" => Some("Eb2 Ab2 Db3 Gb3 Bb3 Eb4"),
+            "guitar-d-standard" => Some("D2 G2 C3 F3 A3 D4"),
+            "guitar-drop-c" => Some("C2 G2 C3 F3 A3 D4"),
+            "guitar-open-g" => Some("D2 G2 D3 G3 B3 D4"),
+            "guitar-dadgad" => Some("D2 A2 D3 G3 A3 D4"),
             _ => None,
         };
         let notes = preset.unwrap_or(spec);
@@ -94,9 +101,19 @@ impl Tuning {
     }
 
     /// Short label for a string in the tab header, e.g. `"E"` or `"Eb"`.
+    /// When the highest string has the same name as the lowest (the two E
+    /// strings of a guitar), it is written in lowercase, as tabs usually do.
     pub fn label(&self, string: usize) -> String {
-        let name = pitch_name(self.strings[string]);
-        name.trim_end_matches(|c: char| c.is_ascii_digit() || c == '-').to_string()
+        let label = |string: usize| {
+            let name = pitch_name(self.strings[string]);
+            name.trim_end_matches(|c: char| c.is_ascii_digit() || c == '-').to_string()
+        };
+        let highest = self.strings.len() - 1;
+        if string == highest && highest > 0 && label(highest) == label(0) {
+            label(string).to_lowercase()
+        } else {
+            label(string)
+        }
     }
 
     /// Human-readable description, e.g. `"E1 A1 D2 G2"`.
@@ -136,5 +153,14 @@ mod tests {
         let tuning = Tuning::from_spec("half-step-down").unwrap();
         assert_eq!(tuning.label(0), "D#");
         assert_eq!(Tuning::from_spec("standard").unwrap().label(3), "G");
+    }
+
+    #[test]
+    fn writes_the_high_e_of_a_guitar_in_lowercase() {
+        let tuning = Tuning::from_spec("guitar-standard").unwrap();
+        assert_eq!(tuning.strings(), &[40, 45, 50, 55, 59, 64]);
+        let labels: Vec<String> = (0..6).map(|s| tuning.label(s)).collect();
+        assert_eq!(labels, ["E", "A", "D", "G", "B", "e"]);
+        assert_eq!(Tuning::from_spec("guitar-drop-d").unwrap().label(5), "E");
     }
 }

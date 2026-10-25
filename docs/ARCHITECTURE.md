@@ -94,7 +94,7 @@ The Rust code lives in two crates:
   mono samples at 22.05 kHz and returns notes, tempo, tuning, tab and MIDI.
   Tested natively with `cargo test`.
 - `crates/web` (`bassline-web`): thin `wasm-bindgen` layer exposing
-  `separate_bass` and `transcribe` to JavaScript.
+  `separate` and `transcribe` to JavaScript.
 
 The worker is restarted after any error (`startWorker` in `app.js`): a Rust
 panic or a lost GPU device leaves the WebAssembly instance unusable.
@@ -114,7 +114,7 @@ for Basic Pitch, using the browser's resampler.
 
 | | |
 | --- | --- |
-| Code | `crates/web/src/lib.rs`: `separate_bass`, `webgpu_device`, `ChunkProgress`; `web/worker.js`: `loadWeights`, `handleSeparate` |
+| Code | `crates/web/src/lib.rs`: `separate`, `webgpu_device`, `ChunkProgress`; `web/worker.js`: `loadWeights`, `handleSeparate` |
 | Third-party | HTDemucs weights (Meta, MIT), [demucs-rs](https://github.com/nikhilunni/demucs-rs) `demucs-core` (Apache-2.0), [burn](https://burn.dev) with `cubecl-wgpu`, WebGPU |
 
 **Model.** HTDemucs (Hybrid Transformer Demucs, v4) separates a mix into
@@ -129,8 +129,10 @@ deep-learning framework. burn's `cubecl-wgpu` backend compiles each operation
 to WGSL compute shaders and runs them on the GPU through WebGPU. Kernel
 fusion is on.
 
-**Own code.** `separate_bass` initialises WebGPU once, loads the weights,
-forwards per-chunk progress to JavaScript and returns only the bass stem.
+**Own code.** `separate` initialises WebGPU once, loads the weights,
+forwards per-chunk progress to JavaScript and returns only the requested stems
+(bass with the 4-stem `htdemucs`; guitar, and the bass with it, with the
+6-stem `htdemucs_6s`).
 `loadWeights` downloads the 84 MB safetensors file from Hugging Face with
 progress and caches it in Cache Storage.
 

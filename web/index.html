@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Bassline to Tab</title>
-  <meta name="description" content="Turn a song into bass tablature, entirely in your browser.">
+  <title>Bass &amp; Guitar to Tab</title>
+  <meta name="description" content="Turn a song into bass or guitar tablature, entirely in your browser.">
   <script src="https://cdn.tailwindcss.com/3.4.17"></script>
   <script src="./theme.js"></script>
 </head>
@@ -12,7 +12,7 @@
   <main class="mx-auto max-w-3xl px-4 py-10">
     <header class="mb-8">
       <div class="flex flex-wrap items-center justify-between gap-3">
-        <h1 class="text-3xl font-bold tracking-tight">Bassline to Tab</h1>
+        <h1 class="text-3xl font-bold tracking-tight">Bass &amp; Guitar to Tab</h1>
         <nav class="flex flex-wrap gap-2">
           <a id="fretboard-link" href="./fretboard.html"
             class="rounded-lg border border-stone-300 px-3 py-1.5 text-sm font-medium hover:border-amber-500 hover:bg-stone-100 dark:border-stone-700 dark:hover:bg-stone-800">Fretboard notes</a>
@@ -25,8 +25,9 @@
         </nav>
       </div>
       <p class="mt-2 text-stone-600 dark:text-stone-400">
-        Choose a song and get its bass line as tablature. Everything runs on this device: the bass is
-        separated with Demucs (on the GPU) and transcribed with Basic Pitch. Your audio is never uploaded.
+        Choose a song and get its bass line, its guitar line or both as tablature. Everything runs on this
+        device: the instruments are separated with Demucs (on the GPU) and transcribed with Basic Pitch.
+        Your audio is never uploaded. Guitar is a first test, chords included.
       </p>
     </header>
 
@@ -44,7 +45,15 @@
       </div>
 
       <div class="grid gap-4 sm:grid-cols-2">
-        <div>
+        <div class="sm:col-span-2">
+          <span class="mb-2 block text-sm font-medium">Instrument</span>
+          <div id="instrument-choice" class="inline-flex overflow-hidden rounded-lg border border-stone-300 text-sm dark:border-stone-700" role="radiogroup" aria-label="Instrument">
+            <label class="cursor-pointer"><input type="radio" name="instrument" value="bass" class="peer sr-only" checked><span class="block px-4 py-2 peer-checked:bg-amber-600 peer-checked:text-white">Bass</span></label>
+            <label class="cursor-pointer border-l border-stone-300 dark:border-stone-700"><input type="radio" name="instrument" value="guitar" class="peer sr-only"><span class="block px-4 py-2 peer-checked:bg-amber-600 peer-checked:text-white">Guitar</span></label>
+            <label class="cursor-pointer border-l border-stone-300 dark:border-stone-700"><input type="radio" name="instrument" value="both" class="peer sr-only"><span class="block px-4 py-2 peer-checked:bg-amber-600 peer-checked:text-white">Both</span></label>
+          </div>
+        </div>
+        <div id="bass-tuning-field">
           <label for="tuning" class="mb-2 block text-sm font-medium">Bass tuning</label>
           <select id="tuning" class="w-full rounded-lg border border-stone-300 bg-white px-3 py-2 dark:border-stone-700 dark:bg-stone-950">
             <option value="standard">Standard (E A D G)</option>
@@ -57,6 +66,28 @@
           </select>
           <input id="tuning-custom" type="text" placeholder="E1 A1 D2 G2" maxlength="100" hidden
             class="mt-2 w-full rounded-lg border border-stone-300 bg-white px-3 py-2 font-mono text-sm dark:border-stone-700 dark:bg-stone-950">
+        </div>
+        <div id="guitar-tuning-field" hidden>
+          <label for="guitar-tuning" class="mb-2 block text-sm font-medium">Guitar tuning</label>
+          <select id="guitar-tuning" class="w-full rounded-lg border border-stone-300 bg-white px-3 py-2 dark:border-stone-700 dark:bg-stone-950">
+            <option value="guitar-standard">Standard (E A D G B E)</option>
+            <option value="guitar-drop-d">Drop D (D A D G B E)</option>
+            <option value="guitar-half-step-down">Half step down (E♭ A♭ D♭ G♭ B♭ E♭)</option>
+            <option value="guitar-d-standard">D standard (D G C F A D)</option>
+            <option value="guitar-drop-c">Drop C (C G C F A D)</option>
+            <option value="guitar-open-g">Open G (D G D G B D)</option>
+            <option value="guitar-dadgad">DADGAD (D A D G A D)</option>
+            <option value="custom">Custom...</option>
+          </select>
+          <input id="guitar-tuning-custom" type="text" placeholder="E2 A2 D3 G3 B3 E4" maxlength="100" hidden
+            class="mt-2 w-full rounded-lg border border-stone-300 bg-white px-3 py-2 font-mono text-sm dark:border-stone-700 dark:bg-stone-950">
+          <label class="mt-3 flex items-start gap-3">
+            <input id="guitar-chords" type="checkbox" checked class="mt-1 h-4 w-4 accent-amber-600">
+            <span class="text-sm">
+              Detect chords
+              <span class="block text-xs text-stone-500">Off writes one note at a time, cleaner for solos and single-note riffs.</span>
+            </span>
+          </label>
         </div>
         <div>
           <label for="bpm" class="mb-2 block text-sm font-medium">Tempo (BPM)</label>
@@ -71,14 +102,14 @@
         <label class="flex items-start gap-3 self-end pb-2">
           <input id="separate" type="checkbox" checked class="mt-1 h-4 w-4 accent-amber-600">
           <span class="text-sm">
-            Separate the bass with Demucs
-            <span class="block text-xs text-stone-500">Turn off only for an isolated bass recording.</span>
+            Separate the instrument with Demucs
+            <span class="block text-xs text-stone-500">Turn off only for an isolated bass or guitar recording.</span>
           </span>
         </label>
         <label class="flex items-start gap-3 sm:col-span-2">
           <input id="compress-bass" type="checkbox" class="mt-1 h-4 w-4 accent-amber-600">
           <span class="text-sm">
-            Save the separated bass compressed (Opus)
+            Save the separated tracks compressed (Opus)
             <span id="compress-bass-hint" class="block text-xs text-stone-500">About five times smaller in your songs. Off keeps it as WAV, without any loss.</span>
           </span>
         </label>
@@ -105,7 +136,8 @@
         Transcribe
       </button>
       <p class="text-xs text-stone-500">
-        The first separation downloads the Demucs model (<span id="weights-size">~84</span> MB). It is cached for next time.
+        The first separation downloads the Demucs model (<span id="weights-size">~84</span> MB; guitar uses another
+        model of <span id="guitar-weights-size">~84</span> MB). It is cached for next time.
       </p>
     </form>
 
@@ -133,6 +165,7 @@
           <span class="font-medium">Play along</span>
           <div id="source-toggle" class="inline-flex overflow-hidden rounded-lg border border-stone-300 dark:border-stone-700" role="group" aria-label="Audio to play">
             <button type="button" data-source="bass" class="source-button px-3 py-1">Bass only</button>
+            <button type="button" data-source="guitar" class="source-button border-l border-stone-300 px-3 py-1 dark:border-stone-700">Guitar only</button>
             <button type="button" data-source="mix" class="source-button border-l border-stone-300 px-3 py-1 dark:border-stone-700">Full mix</button>
           </div>
         </div>
@@ -144,9 +177,13 @@
         <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
           <div class="flex flex-wrap items-center gap-3">
             <h2 class="text-xl font-semibold">Tablature</h2>
+            <div id="instrument-toggle" class="inline-flex overflow-hidden rounded-lg border border-stone-300 text-sm dark:border-stone-700" role="group" aria-label="Instrument" hidden>
+              <button type="button" data-instrument="bass" class="instrument-button px-3 py-1">Bass</button>
+              <button type="button" data-instrument="guitar" class="instrument-button border-l border-stone-300 px-3 py-1 dark:border-stone-700">Guitar</button>
+            </div>
             <div id="fingering-toggle" class="inline-flex overflow-hidden rounded-lg border border-stone-300 text-sm dark:border-stone-700" role="group" aria-label="Fingering">
               <button type="button" data-fingering="open-position" class="fingering-button px-3 py-1" title="Low frets and open strings">Open position</button>
-              <button type="button" data-fingering="lower-strings" class="fingering-button border-l border-stone-300 px-3 py-1 dark:border-stone-700" title="E and A strings, higher up the neck">Lower strings</button>
+              <button type="button" data-fingering="lower-strings" class="fingering-button border-l border-stone-300 px-3 py-1 dark:border-stone-700" title="Thicker strings, higher up the neck">Lower strings</button>
             </div>
           </div>
           <div class="flex flex-wrap gap-2 text-sm">
@@ -165,7 +202,7 @@
         <h2 class="text-xl font-semibold">Your songs</h2>
         <span id="storage-usage" class="text-xs text-stone-500"></span>
       </div>
-      <p class="mb-3 text-sm text-stone-500">Saved in this browser only. Opening a song reuses its separated bass, so changing the settings and transcribing again takes seconds. Export them to keep a backup or move them to another browser.</p>
+      <p class="mb-3 text-sm text-stone-500">Saved in this browser only. Opening a song reuses its separated tracks, so changing the settings and transcribing again takes seconds. Export them to keep a backup or move them to another browser.</p>
       <div class="mb-3 flex flex-wrap items-center gap-2 text-sm">
         <button id="export-history" type="button" class="rounded-lg border border-stone-300 px-3 py-1.5 hover:bg-stone-100 dark:border-stone-700 dark:hover:bg-stone-800">Export songs</button>
         <label class="cursor-pointer rounded-lg border border-stone-300 px-3 py-1.5 hover:bg-stone-100 dark:border-stone-700 dark:hover:bg-stone-800">

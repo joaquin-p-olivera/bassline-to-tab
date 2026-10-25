@@ -5,8 +5,7 @@
 //               { id, type: "done", ... } | { id, type: "error", message }
 
 const wasm = await import("./pkg/bassline_web.js");
-const { separate_bass, separation_weights_size_mb, separation_weights_url, transcribe, transcription_sample_rate } =
-  wasm;
+const { separate, separation_weights_size_mb, separation_weights_url, transcribe, transcription_sample_rate } = wasm;
 
 const WEIGHTS_CACHE = "bassline-to-tab-weights-v1";
 const ready = wasm.default();
@@ -41,8 +40,8 @@ async function readWithProgress(response, expectedBytes, onProgress) {
   return bytes;
 }
 
-async function loadWeights(onProgress) {
-  const url = separation_weights_url();
+async function loadWeights(model, onProgress) {
+  const url = separation_weights_url(model);
   const cache = await openCache();
   const cached = cache && (await cache.match(url));
   if (cached) {
@@ -54,7 +53,7 @@ async function loadWeights(onProgress) {
   if (!response.ok) {
     throw new Error(`Could not download the Demucs model (HTTP ${response.status})`);
   }
-  const bytes = await readWithProgress(response, separation_weights_size_mb() * 1e6, onProgress);
+  const bytes = await readWithProgress(response, separation_weights_size_mb(model) * 1e6, onProgress);
   if (cache) {
     try {
       await cache.put(url, new Response(bytes, { headers: { "content-type": "application/octet-stream" } }));
@@ -65,17 +64,27 @@ async function loadWeights(onProgress) {
   return bytes;
 }
 
+/// data: { model: "htdemucs" | "htdemucs_6s", stems: ["bass", "guitar"], left, right, sampleRate }.
+/// Replies with stems: { bass: { left, right }, ... }.
 async function handleSeparate(data, post) {
-  const weights = await loadWeights((done, total) => post({ type: "progress", stage: "download", done, total }));
+  const weights = await loadWeights(data.model, (done, total) =>
+    post({ type: "progress", stage: "download", done, total }),
+  );
   const started = performance.now();
-  const stem = await separate_bass(weights, data.left, data.right, data.sampleRate, (done, total) =>
+  const separated = await separate(weights, data.model, data.stems, data.left, data.right, data.sampleRate, (done, total) =>
     post({ type: "progress", stage: "separate", done, total }),
   );
-  const half = stem.length / 2;
-  const left = stem.slice(0, half);
-  const right = stem.slice(half);
+  const stems = {};
+  const transfer = [];
+  data.stems.forEach((name, i) => {
+    const half = separated[i].length / 2;
+    const left = separated[i].slice(0, half);
+    const right = separated[i].slice(half);
+    stems[name] = { left, right };
+    transfer.push(left.buffer, right.buffer);
+  });
   const seconds = (performance.now() - started) / 1000;
-  post({ type: "done", left, right, sampleRate: data.sampleRate, seconds }, [left.buffer, right.buffer]);
+  post({ type: "done", stems, sampleRate: data.sampleRate, seconds }, transfer);
 }
 
 function handleTranscribe(data, post) {
@@ -95,7 +104,8 @@ self.onmessage = async ({ data }) => {
         post({
           type: "done",
           transcriptionSampleRate: transcription_sample_rate(),
-          weightsSizeMb: separation_weights_size_mb(),
+          weightsSizeMb: separation_weights_size_mb("htdemucs"),
+          guitarWeightsSizeMb: separation_weights_size_mb("htdemucs_6s"),
         });
         break;
       case "separate":

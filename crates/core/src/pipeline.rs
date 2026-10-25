@@ -1,10 +1,11 @@
-//! End-to-end transcription of mono bass audio into tablature.
+//! End-to-end transcription of mono bass or guitar audio into tablature.
 
 use anyhow::{bail, Result};
 use log::{debug, info, warn};
 
 use crate::analysis::{self, Tempo, TuningEstimate};
 use crate::fretboard::{self, FingeringStyle, Position};
+use crate::instrument::Instrument;
 use crate::midi;
 use crate::model::{BasicPitch, MIDI_OFFSET};
 use crate::notes::{self, DecodeParams, Note};
@@ -20,6 +21,7 @@ const MODEL_FRAMES_PER_SECOND: f64 = 86.0;
 /// User-facing transcription settings.
 #[derive(Clone, Debug)]
 pub struct Options {
+    pub instrument: Instrument,
     pub tuning: Tuning,
     pub frets: u8,
     /// Tempo in BPM; estimated from the notes when `None`.
@@ -28,11 +30,15 @@ pub struct Options {
     pub frame_threshold: f32,
     pub min_note_ms: f64,
     pub bars_per_line: usize,
+    /// Keep notes played together as chords instead of reducing the audio
+    /// to one note at a time (meant for guitar).
+    pub chords: bool,
 }
 
 impl Default for Options {
     fn default() -> Self {
         Self {
+            instrument: Instrument::Bass,
             tuning: Tuning::from_spec("standard").expect("built-in preset"),
             frets: 24,
             bpm: None,
@@ -40,6 +46,7 @@ impl Default for Options {
             frame_threshold: 0.3,
             min_note_ms: 80.0,
             bars_per_line: 4,
+            chords: false,
         }
     }
 }
@@ -68,6 +75,7 @@ pub struct Fingering {
 /// Everything the transcription produced.
 #[derive(Clone, Debug)]
 pub struct Transcription {
+    /// In time order; the notes of a chord are next to each other, low to high.
     pub notes: Vec<TabNote>,
     pub tempo: Tempo,
     pub tuning_estimate: Option<TuningEstimate>,
@@ -131,8 +139,12 @@ fn fit_pitches(line: &[Note], options: &Options) -> (Vec<u8>, Option<String>) {
     let warning = (shifted > 0).then(|| {
         format!(
             "{shifted} notes were outside the range of {} and were shifted by octaves; \
-             if the song uses a lower tuning, try Drop D or a 5-string tuning.",
-            options.tuning.describe()
+             if the song uses a lower tuning, try {}.",
+            options.tuning.describe(),
+            match options.instrument {
+                Instrument::Bass => "Drop D or a 5-string tuning",
+                Instrument::Guitar => "Drop D or a lower tuning",
+            }
         )
     });
     (played, warning)
@@ -146,6 +158,30 @@ fn finger(line: &[Note], played: &[u8], tempo: &Tempo, options: &Options, style:
     Fingering { style, positions, events, tab }
 }
 
+/// Fingers chords (`groups`, with `played` holding the pitches of all their
+/// notes in order) in `style` and renders the tab.
+fn finger_chords(
+    groups: &[Vec<Note>],
+    played: &[u8],
+    tempo: &Tempo,
+    options: &Options,
+    style: FingeringStyle,
+) -> Fingering {
+    let mut remaining = played;
+    let chords: Vec<Vec<u8>> = groups
+        .iter()
+        .map(|group| {
+            let (chord, rest) = remaining.split_at(group.len());
+            remaining = rest;
+            chord.to_vec()
+        })
+        .collect();
+    let by_chord = fretboard::assign_chord_positions(&chords, &options.tuning, options.frets, style);
+    let events = tab::build_chord_events(groups, &by_chord, tempo);
+    let tab = tab::render(&events, &options.tuning, options.bars_per_line);
+    Fingering { style, positions: by_chord.into_iter().flatten().collect(), events, tab }
+}
+
 /// Transcribes mono audio sampled at [`crate::model::SAMPLE_RATE`].
 /// `progress(done, total)` is called as the model processes the audio.
 pub fn transcribe(
@@ -154,7 +190,7 @@ pub fn transcribe(
     options: &Options,
     progress: &mut dyn FnMut(usize, usize),
 ) -> Result<Transcription> {
-    info!("Bass tuning: {} ({} frets)", options.tuning.describe(), options.frets);
+    info!("{:?} tuning: {} ({} frets)", options.instrument, options.tuning.describe(), options.frets);
     let posteriorgram = model.run_with_progress(samples, progress)?;
 
     let raw = notes::decode_notes(&posteriorgram, &decode_params(options));
@@ -167,38 +203,64 @@ pub fn transcribe(
             note.amplitude
         );
     }
-    let mut line = notes::to_monophonic(&raw);
-    let octave_fixes = notes::correct_octaves(&mut line, &posteriorgram, options.tuning.lowest());
-    info!("Moved {octave_fixes} notes down an octave (harmonic detected instead of the fundamental)");
-    let refine_stats = onsets::refine_onsets(&mut line, samples, crate::model::SAMPLE_RATE);
+    // Notes grouped by attack: chords, or one note per group in single-note mode.
+    let (groups, refine_stats) = if options.chords {
+        // Onset refinement and octave correction work on a single line; chords
+        // keep the model's onsets.
+        (notes::to_chords(&raw), RefineStats::default())
+    } else {
+        let mut line = notes::to_monophonic(&raw);
+        if options.instrument.corrects_octaves() {
+            let octave_fixes = notes::correct_octaves(&mut line, &posteriorgram, options.tuning.lowest());
+            info!("Moved {octave_fixes} notes down an octave (harmonic detected instead of the fundamental)");
+        }
+        let refine_stats = onsets::refine_onsets(&mut line, samples, crate::model::SAMPLE_RATE);
+        (line.into_iter().map(|note| vec![note]).collect::<Vec<_>>(), refine_stats)
+    };
+    // The lowest note of each group carries the rhythm; `all` has every note.
+    let line: Vec<Note> = groups.iter().map(|group| group[0].clone()).collect();
+    let all: Vec<Note> = groups.iter().flatten().cloned().collect();
     info!(
-        "Detected {} notes ({} raw; {} onsets refined, {} pre-echoes dropped)",
-        line.len(),
+        "Detected {} notes in {} attacks ({} raw; {} onsets refined, {} pre-echoes dropped)",
+        all.len(),
+        groups.len(),
         raw.len(),
         refine_stats.adjusted,
         refine_stats.dropped
     );
     if line.is_empty() {
-        bail!("No notes were detected. Try a lower onset threshold, or check that the audio contains bass.");
+        bail!(
+            "No notes were detected. Try a lower onset threshold, or check that the audio contains {}.",
+            options.instrument.name()
+        );
     }
 
     let mut warnings = Vec::new();
-    let tuning_estimate = analysis::estimate_tuning(&posteriorgram, &line);
+    let tuning_estimate = analysis::estimate_tuning(&posteriorgram, &all);
     warnings.extend(tuning_warning(tuning_estimate));
 
     let tempo = analysis::estimate_tempo(&line, options.bpm);
     info!("Tempo: {:.1} BPM, grid starts at {:.2} s", tempo.bpm, tempo.origin);
 
-    let (played, range_warning) = fit_pitches(&line, options);
+    let (played, range_warning) = fit_pitches(&all, options);
     warnings.extend(range_warning);
     for warning in &warnings {
         warn!("{warning}");
     }
 
-    let fingerings = FingeringStyle::ALL.iter().map(|style| finger(&line, &played, &tempo, options, *style)).collect();
-    let midi = midi::encode(&line, tempo.bpm)?;
+    let fingerings = FingeringStyle::ALL
+        .iter()
+        .map(|style| {
+            if options.chords {
+                finger_chords(&groups, &played, &tempo, options, *style)
+            } else {
+                finger(&line, &played, &tempo, options, *style)
+            }
+        })
+        .collect();
+    let midi = midi::encode(&all, tempo.bpm, options.instrument)?;
 
-    let notes = line.into_iter().zip(played).map(|(note, played_pitch)| TabNote { note, played_pitch }).collect();
+    let notes = all.into_iter().zip(played).map(|(note, played_pitch)| TabNote { note, played_pitch }).collect();
     Ok(Transcription {
         notes,
         tempo,

@@ -6,11 +6,10 @@ use anyhow::{Context, Result};
 use midly::num::{u15, u24, u28, u4, u7};
 use midly::{Format, Header, MetaMessage, MidiMessage, Smf, Timing, TrackEvent, TrackEventKind};
 
+use crate::instrument::Instrument;
 use crate::notes::Note;
 
 const TICKS_PER_BEAT: u16 = 480;
-/// General MIDI "Electric Bass (finger)", zero-based.
-const BASS_PROGRAM: u8 = 33;
 const CHANNEL: u8 = 0;
 
 fn seconds_to_ticks(seconds: f64, bpm: f64) -> u32 {
@@ -26,7 +25,7 @@ fn midi_event(message: MidiMessage) -> TrackEventKind<'static> {
 }
 
 /// Encodes notes as a single-track MIDI file (as bytes).
-pub fn encode(notes: &[Note], bpm: f64) -> Result<Vec<u8>> {
+pub fn encode(notes: &[Note], bpm: f64, instrument: Instrument) -> Result<Vec<u8>> {
     // (tick, is_note_on, event); offs sort before ons at the same tick.
     let mut timed: Vec<(u32, bool, TrackEventKind<'static>)> = Vec::with_capacity(notes.len() * 2);
     for note in notes {
@@ -40,12 +39,15 @@ pub fn encode(notes: &[Note], bpm: f64) -> Result<Vec<u8>> {
 
     let tempo_us = (60_000_000.0 / bpm).round() as u32;
     let mut track = vec![
-        TrackEvent { delta: u28::new(0), kind: TrackEventKind::Meta(MetaMessage::TrackName(b"Bass")) },
+        TrackEvent {
+            delta: u28::new(0),
+            kind: TrackEventKind::Meta(MetaMessage::TrackName(instrument.midi_track_name())),
+        },
         TrackEvent { delta: u28::new(0), kind: TrackEventKind::Meta(MetaMessage::Tempo(u24::new(tempo_us))) },
         TrackEvent { delta: u28::new(0), kind: TrackEventKind::Meta(MetaMessage::TimeSignature(4, 2, 24, 8)) },
         TrackEvent {
             delta: u28::new(0),
-            kind: midi_event(MidiMessage::ProgramChange { program: u7::new(BASS_PROGRAM) }),
+            kind: midi_event(MidiMessage::ProgramChange { program: u7::new(instrument.midi_program()) }),
         },
     ];
     let mut previous_tick = 0;
@@ -65,8 +67,8 @@ pub fn encode(notes: &[Note], bpm: f64) -> Result<Vec<u8>> {
 }
 
 /// Writes notes to a MIDI file.
-pub fn write(path: &Path, notes: &[Note], bpm: f64) -> Result<()> {
-    std::fs::write(path, encode(notes, bpm)?).with_context(|| format!("cannot write {}", path.display()))
+pub fn write(path: &Path, notes: &[Note], bpm: f64, instrument: Instrument) -> Result<()> {
+    std::fs::write(path, encode(notes, bpm, instrument)?).with_context(|| format!("cannot write {}", path.display()))
 }
 
 #[cfg(test)]
@@ -79,7 +81,7 @@ mod tests {
             Note { start: 0.0, end: 0.5, start_frame: 0, end_frame: 0, pitch: 28, amplitude: 1.0 },
             Note { start: 0.5, end: 1.0, start_frame: 0, end_frame: 0, pitch: 33, amplitude: 0.5 },
         ];
-        let bytes = encode(&notes, 120.0).unwrap();
+        let bytes = encode(&notes, 120.0, Instrument::Bass).unwrap();
         let smf = Smf::parse(&bytes).unwrap();
         let mut tick = 0u32;
         let mut ons = Vec::new();

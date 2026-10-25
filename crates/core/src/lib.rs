@@ -1,4 +1,4 @@
-//! bassline-core: transcribe a bass line into bass tablature.
+//! bassline-core: transcribe a bass line (or a single-note guitar line) into tablature.
 //!
 //! Platform-agnostic: it takes mono samples at [`model::SAMPLE_RATE`] and
 //! returns notes, tempo, tuning and an ASCII tab. Audio decoding and bass
@@ -9,6 +9,7 @@
 
 pub mod analysis;
 pub mod fretboard;
+pub mod instrument;
 pub mod midi;
 pub mod model;
 pub mod notes;

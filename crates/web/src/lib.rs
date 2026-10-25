@@ -1,10 +1,10 @@
 //! WebAssembly bindings for the browser app.
 //!
 //! Two entry points, both meant to run inside a Web Worker:
-//! - [`separate_bass`]: isolates the bass stem with HTDemucs on WebGPU
-//!   (via `demucs-core` from demucs-rs).
-//! - [`transcribe`]: turns mono bass audio at 22.05 kHz into tablature with
-//!   `bassline-core`.
+//! - [`separate`]: isolates the bass and/or guitar stems with HTDemucs on
+//!   WebGPU (via `demucs-core` from demucs-rs).
+//! - [`transcribe`]: turns mono bass or guitar audio at 22.05 kHz into
+//!   tablature with `bassline-core`.
 //!
 //! Audio decoding and resampling happen in JavaScript (Web Audio API).
 
@@ -12,6 +12,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use bassline_core::instrument::Instrument;
 use bassline_core::model::{BasicPitch, SAMPLE_RATE};
 use bassline_core::pipeline::{self, Fingering, Options, Transcription};
 use bassline_core::tab;
@@ -19,7 +20,7 @@ use bassline_core::tuning::{pitch_name, Tuning};
 use burn::backend::wgpu::graphics::WebGpu;
 use burn::backend::wgpu::{init_setup_async, RuntimeOptions, Wgpu, WgpuDevice};
 use demucs_core::listener::{ForwardEvent, ForwardListener};
-use demucs_core::model::metadata::{self, StemId, HTDEMUCS};
+use demucs_core::model::metadata::{self, ModelInfo, StemId};
 use demucs_core::{Demucs, ModelOptions};
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
@@ -77,6 +78,7 @@ fn basic_pitch() -> Result<Rc<BasicPitch>, JsError> {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct JsOptions {
+    instrument: Option<String>,
     tuning: String,
     frets: Option<u8>,
     bpm: Option<f64>,
@@ -84,12 +86,15 @@ struct JsOptions {
     frame_threshold: Option<f32>,
     min_note_ms: Option<f64>,
     bars_per_line: Option<usize>,
+    chords: Option<bool>,
 }
 
 impl JsOptions {
     fn into_options(self) -> anyhow::Result<Options> {
         let defaults = Options::default();
+        let instrument = self.instrument.as_deref().map(Instrument::from_spec).transpose()?.unwrap_or_default();
         Ok(Options {
+            instrument,
             tuning: Tuning::from_spec(&self.tuning)?,
             frets: self.frets.unwrap_or(defaults.frets),
             bpm: self.bpm.filter(|bpm| *bpm > 0.0),
@@ -97,6 +102,7 @@ impl JsOptions {
             frame_threshold: self.frame_threshold.unwrap_or(defaults.frame_threshold),
             min_note_ms: self.min_note_ms.unwrap_or(defaults.min_note_ms),
             bars_per_line: self.bars_per_line.unwrap_or(defaults.bars_per_line).max(1),
+            chords: self.chords.unwrap_or(defaults.chords),
         })
     }
 }
@@ -212,51 +218,86 @@ pub fn transcription_sample_rate() -> u32 {
     SAMPLE_RATE
 }
 
-/// Download URL of the HTDemucs weights used by [`separate_bass`].
-#[wasm_bindgen]
-pub fn separation_weights_url() -> String {
-    metadata::download_url(&HTDEMUCS)
+/// The separation model: `"htdemucs"` (4 stems, the default for bass) or
+/// `"htdemucs_6s"` (6 stems, adds guitar).
+fn model_options(model: &str) -> Result<ModelOptions, JsError> {
+    match model {
+        metadata::HTDEMUCS_ID => Ok(ModelOptions::FourStem),
+        metadata::HTDEMUCS_6S_ID => Ok(ModelOptions::SixStem),
+        other => Err(JsError::new(&format!("unknown separation model {other:?}"))),
+    }
 }
 
-/// Approximate size of the HTDemucs weights, in megabytes.
-#[wasm_bindgen]
-pub fn separation_weights_size_mb() -> u32 {
-    HTDEMUCS.size_mb
+fn model_info(model: &str) -> Result<&'static ModelInfo, JsError> {
+    Ok(model_options(model)?.model_info())
 }
 
-/// Separates the bass from a stereo mix with HTDemucs on WebGPU.
+/// Download URL of the HTDemucs weights for `model` (see [`separate`]).
+#[wasm_bindgen]
+pub fn separation_weights_url(model: &str) -> Result<String, JsError> {
+    Ok(metadata::download_url(model_info(model)?))
+}
+
+/// Approximate size of the weights for `model`, in megabytes.
+#[wasm_bindgen]
+pub fn separation_weights_size_mb(model: &str) -> Result<u32, JsError> {
+    Ok(model_info(model)?.size_mb)
+}
+
+/// Separates `stems` (`"bass"`, `"guitar"`) from a stereo mix with HTDemucs
+/// `model` on WebGPU. Only the 6-stem model has a guitar stem.
 ///
-/// Returns the bass stem as `[left..., right...]` (two equal halves) at
-/// `sample_rate`. `on_progress(done, total)` is called after each ~8 s chunk.
+/// Returns one array per requested stem, in the same order, each as
+/// `[left..., right...]` (two equal halves) at `sample_rate`.
+/// `on_progress(done, total)` is called after each ~8 s chunk.
 #[wasm_bindgen]
-pub async fn separate_bass(
+pub async fn separate(
     weights: &[u8],
+    model: &str,
+    stems: Vec<String>,
     left: &[f32],
     right: &[f32],
     sample_rate: u32,
     on_progress: Option<js_sys::Function>,
-) -> Result<Vec<f32>, JsError> {
+) -> Result<Vec<js_sys::Float32Array>, JsError> {
+    let options = model_options(model)?;
+    let info = options.model_info();
+    let wanted = stems
+        .iter()
+        .map(|name| {
+            StemId::parse(name)
+                .filter(|id| info.stems.contains(id))
+                .ok_or_else(|| JsError::new(&format!("{model} has no {name} stem")))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
     let device = webgpu_device().await;
-    log::info!("Loading HTDemucs ({} MB)", weights.len() / 1_000_000);
-    let model = Demucs::<Backend>::from_bytes(ModelOptions::FourStem, weights, device).map_err(js_error)?;
+    log::info!("Loading {} ({} MB)", info.id, weights.len() / 1_000_000);
+    let demucs = Demucs::<Backend>::from_bytes(options, weights, device).map_err(js_error)?;
 
     log::info!("Separating {:.1} s of audio at {} Hz", left.len() as f64 / f64::from(sample_rate), sample_rate);
     let mut listener = ChunkProgress { callback: on_progress };
-    let stems = model.separate_with_listener(left, right, sample_rate, &mut listener).await.map_err(js_error)?;
-    let bass = stems
+    let mut separated =
+        demucs.separate_with_listener(left, right, sample_rate, &mut listener).await.map_err(js_error)?;
+    wanted
         .into_iter()
-        .find(|stem| stem.id == StemId::Bass)
-        .ok_or_else(|| JsError::new("Demucs returned no bass stem"))?;
-
-    let mut interleaved_halves = bass.left;
-    interleaved_halves.extend_from_slice(&bass.right);
-    Ok(interleaved_halves)
+        .map(|id| {
+            let index = separated
+                .iter()
+                .position(|stem| stem.id == id)
+                .ok_or_else(|| JsError::new(&format!("Demucs returned no {} stem", id.as_str())))?;
+            let stem = separated.swap_remove(index);
+            let mut halves = stem.left;
+            halves.extend_from_slice(&stem.right);
+            Ok(js_sys::Float32Array::from(halves.as_slice()))
+        })
+        .collect()
 }
 
-/// Transcribes mono bass audio at [`transcription_sample_rate`] into tablature.
+/// Transcribes mono bass or guitar audio at [`transcription_sample_rate`] into tablature.
 ///
-/// `options`: `{ tuning, frets?, bpm?, onsetThreshold?, frameThreshold?,
-/// minNoteMs?, barsPerLine? }`. `on_progress(done, total)` reports model progress.
+/// `options`: `{ instrument?, tuning, frets?, bpm?, onsetThreshold?, frameThreshold?,
+/// minNoteMs?, barsPerLine?, chords? }`. `on_progress(done, total)` reports model progress.
 #[wasm_bindgen]
 pub fn transcribe(
     samples: &[f32],

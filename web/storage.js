@@ -5,7 +5,10 @@
 //
 // Song record shape ("songs" store):
 //   { id, name, createdAt, duration, file: File, bassWav: Blob | null,
-//     separated: boolean, lastOptions, lastResult }
+//     separated: boolean, lastOptions, lastResult,
+//     guitarWav?: Blob | null, guitarOptions?, guitarResult? }
+// The bass fields keep their names from before guitar existed; the guitar
+// fields have the same shape.
 // bassWav is a 16-bit mono WAV, or an Ogg Opus (type "audio/ogg") when the
 // user chose to save the bass compressed; the name stays for compatibility.
 //

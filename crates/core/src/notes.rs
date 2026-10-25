@@ -5,7 +5,8 @@
 //! activations start notes, which are extended while the note activation
 //! stays above a threshold. Basic Pitch's "melodia trick" (adding notes with
 //! no detected onset) is intentionally left out: on bass it mostly adds noise.
-//! `to_monophonic` then reduces the result to a single line.
+//! `to_monophonic` then reduces the result to a single line, or `to_chords`
+//! groups it into chords (guitar).
 
 use crate::model::{Grid, Posteriorgram, MIDI_OFFSET, N_PITCHES};
 
@@ -62,6 +63,17 @@ const LOWER_NOTE_MIN_RELATIVE_AMPLITUDE: f32 = 0.5;
 const PRE_ECHO_MAX_GAP_S: f64 = 0.025;
 /// ...if it is weaker than this fraction of that note.
 const PRE_ECHO_MAX_RELATIVE_AMPLITUDE: f32 = 0.5;
+/// Chord notes weaker than this fraction of the strongest one are dropped.
+const CHORD_NOTE_MIN_RELATIVE_AMPLITUDE: f32 = 0.3;
+/// Intervals (semitones) at which the model reports overtones of a lower
+/// note: octave, octave + fifth, two octaves.
+const OVERTONE_INTERVALS: [u8; 3] = [12, 19, 24];
+/// A chord note an overtone interval above another is taken as that note's
+/// overtone when it is weaker than this fraction of it. Real octave
+/// doublings in a chord are about as loud as the note below.
+const OVERTONE_MAX_RELATIVE_AMPLITUDE: f32 = 0.6;
+/// A guitar has six strings.
+const MAX_CHORD_NOTES: usize = 6;
 
 fn pitch_bin_range(params: &DecodeParams) -> (usize, usize) {
     let low = usize::from(params.min_pitch.max(MIDI_OFFSET) - MIDI_OFFSET);
@@ -229,6 +241,73 @@ pub fn to_monophonic(notes: &[Note]) -> Vec<Note> {
     drop_pre_echoes(line)
 }
 
+/// Groups notes that start together into chords (each sorted from low to
+/// high, all starting at the first note's time), in time order. A single
+/// note is a chord of one.
+///
+/// Within a chord, repeated pitches are merged, weak notes and likely
+/// overtones of a lower note are dropped, and at most six notes are kept.
+/// A weak chord whose notes all ring on into the next, stronger chord is a
+/// pre-echo of it and is dropped too.
+pub fn to_chords(notes: &[Note]) -> Vec<Vec<Note>> {
+    let mut sorted = notes.to_vec();
+    sorted.sort_by(|a, b| a.start.total_cmp(&b.start).then(a.pitch.cmp(&b.pitch)));
+
+    let mut groups: Vec<Vec<Note>> = Vec::new();
+    for note in sorted {
+        match groups.last_mut() {
+            Some(group) if note.start - group[0].start < SIMULTANEOUS_WINDOW_S => group.push(note),
+            _ => groups.push(vec![note]),
+        }
+    }
+    let chords: Vec<Vec<Note>> = groups.into_iter().map(clean_chord).collect();
+
+    let strongest = |chord: &[Note]| chord.iter().map(|n| n.amplitude).fold(0.0, f32::max);
+    let keep: Vec<bool> = (0..chords.len())
+        .map(|i| {
+            let Some(next) = chords.get(i + 1) else { return true };
+            let chord = &chords[i];
+            let is_pre_echo = chord.iter().all(|note| {
+                next.iter().any(|n| n.pitch == note.pitch) && next[0].start - note.end <= PRE_ECHO_MAX_GAP_S
+            }) && strongest(chord) < PRE_ECHO_MAX_RELATIVE_AMPLITUDE * strongest(next);
+            !is_pre_echo
+        })
+        .collect();
+    chords.into_iter().zip(keep).filter_map(|(chord, keep)| keep.then_some(chord)).collect()
+}
+
+fn clean_chord(mut group: Vec<Note>) -> Vec<Note> {
+    let start = group[0].start;
+    let start_frame = group[0].start_frame;
+    // One note per pitch, the strongest.
+    group.sort_by(|a, b| a.pitch.cmp(&b.pitch).then(b.amplitude.total_cmp(&a.amplitude)));
+    group.dedup_by(|later, earlier| later.pitch == earlier.pitch);
+
+    let strongest = group.iter().map(|n| n.amplitude).fold(0.0, f32::max);
+    let is_overtone = |note: &Note, chord: &[Note]| {
+        chord.iter().any(|lower| {
+            OVERTONE_INTERVALS.contains(&note.pitch.wrapping_sub(lower.pitch))
+                && note.pitch > lower.pitch
+                && note.amplitude < OVERTONE_MAX_RELATIVE_AMPLITUDE * lower.amplitude
+        })
+    };
+    let mut chord: Vec<Note> = group
+        .iter()
+        .filter(|note| note.amplitude >= CHORD_NOTE_MIN_RELATIVE_AMPLITUDE * strongest && !is_overtone(note, &group))
+        .cloned()
+        .collect();
+    if chord.len() > MAX_CHORD_NOTES {
+        chord.sort_by(|a, b| b.amplitude.total_cmp(&a.amplitude));
+        chord.truncate(MAX_CHORD_NOTES);
+        chord.sort_by_key(|note| note.pitch);
+    }
+    for note in &mut chord {
+        note.start = start;
+        note.start_frame = start_frame;
+    }
+    chord
+}
+
 /// Removes weak notes that run straight into a stronger note of the same
 /// pitch. The model's long low-frequency analysis windows "see" an attack
 /// coming and often emit such a pre-echo a sixteenth or so early.
@@ -325,5 +404,40 @@ mod tests {
         let line = to_monophonic(&[note(0.0, 1.0, 28, 0.6), note(0.5, 1.5, 33, 0.6)]);
         assert_eq!(line.len(), 2);
         assert_eq!(line[0].end, 0.5);
+    }
+
+    #[test]
+    fn groups_simultaneous_notes_into_chords() {
+        // An E5 power chord (E2 B2 E3), then a single A2.
+        let chords = to_chords(&[
+            note(0.0, 1.0, 40, 0.8),
+            note(0.02, 1.0, 47, 0.7),
+            note(0.01, 1.0, 52, 0.7),
+            note(1.0, 2.0, 45, 0.8),
+        ]);
+        let pitches: Vec<Vec<u8>> = chords.iter().map(|c| c.iter().map(|n| n.pitch).collect()).collect();
+        assert_eq!(pitches, vec![vec![40, 47, 52], vec![45]]);
+        assert!(chords[0].iter().all(|n| n.start == 0.0));
+    }
+
+    #[test]
+    fn chords_drop_weak_notes_and_overtones() {
+        let chords = to_chords(&[
+            note(0.0, 1.0, 45, 0.8),
+            // A weak octave above: an overtone of the A.
+            note(0.0, 1.0, 57, 0.3),
+            // Far too weak to be part of the chord.
+            note(0.01, 1.0, 49, 0.1),
+            note(0.01, 1.0, 52, 0.7),
+        ]);
+        let pitches: Vec<u8> = chords[0].iter().map(|n| n.pitch).collect();
+        assert_eq!(pitches, vec![45, 52]);
+    }
+
+    #[test]
+    fn chords_drop_pre_echoes() {
+        let chords = to_chords(&[note(0.0, 0.49, 40, 0.2), note(0.5, 1.0, 40, 0.8), note(0.5, 1.0, 47, 0.8)]);
+        assert_eq!(chords.len(), 1);
+        assert_eq!(chords[0].len(), 2);
     }
 }

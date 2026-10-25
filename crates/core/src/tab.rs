@@ -40,9 +40,29 @@ pub fn build_events(notes: &[Note], positions: &[Option<Position>], tempo: &Temp
     events
 }
 
-fn bar_cell_width(bar: usize, events_by_step: &HashMap<usize, Position>) -> usize {
+/// Places chords (see [`crate::notes::to_chords`]) on the grid: every
+/// placed note of a chord gets an event on the chord's step. When two
+/// chords land on the same step only the first one is kept.
+pub fn build_chord_events(chords: &[Vec<Note>], positions: &[Vec<Option<Position>>], tempo: &Tempo) -> Vec<TabEvent> {
+    let mut events: Vec<TabEvent> = Vec::new();
+    for (chord, positions) in chords.iter().zip(positions) {
+        let placed: Vec<Position> = positions.iter().flatten().copied().collect();
+        if placed.is_empty() {
+            continue;
+        }
+        let step = quantize_step(&chord[0], tempo);
+        if events.last().is_some_and(|last| last.step >= step) {
+            continue;
+        }
+        events.extend(placed.into_iter().map(|position| TabEvent { step, position }));
+    }
+    events
+}
+
+fn bar_cell_width(bar: usize, events_by_step: &HashMap<usize, Vec<Position>>) -> usize {
     let has_two_digit_fret = (bar * STEPS_PER_BAR..(bar + 1) * STEPS_PER_BAR)
         .filter_map(|step| events_by_step.get(&step))
+        .flatten()
         .any(|position| position.fret >= 10);
     if has_two_digit_fret {
         3
@@ -51,11 +71,14 @@ fn bar_cell_width(bar: usize, events_by_step: &HashMap<usize, Position>) -> usiz
     }
 }
 
-/// Renders events as ASCII bass tab, highest string on top, wrapping every
+/// Renders events as ASCII tab (several events on one step are a chord), highest string on top, wrapping every
 /// `bars_per_line` bars. Each line block starts with the bar numbers.
 pub fn render(events: &[TabEvent], tuning: &Tuning, bars_per_line: usize) -> String {
     let bars_per_line = bars_per_line.max(1);
-    let events_by_step: HashMap<usize, Position> = events.iter().map(|e| (e.step, e.position)).collect();
+    let mut events_by_step: HashMap<usize, Vec<Position>> = HashMap::new();
+    for event in events {
+        events_by_step.entry(event.step).or_default().push(event.position);
+    }
     let n_bars = events.last().map(|e| e.step / STEPS_PER_BAR + 1).unwrap_or(1);
     let labels: Vec<String> = (0..tuning.strings().len()).map(|s| tuning.label(s)).collect();
     let label_width = labels.iter().map(String::len).max().unwrap_or(1);
@@ -76,10 +99,11 @@ pub fn render(events: &[TabEvent], tuning: &Tuning, bars_per_line: usize) -> Str
             let mut line = format!("{:<w$}|", labels[string], w = label_width);
             for (bar, width) in bars.iter().zip(&widths) {
                 for step in bar * STEPS_PER_BAR..(bar + 1) * STEPS_PER_BAR {
-                    let cell = match events_by_step.get(&step) {
-                        Some(position) if position.string == string => position.fret.to_string(),
-                        _ => String::new(),
-                    };
+                    let cell = events_by_step
+                        .get(&step)
+                        .and_then(|positions| positions.iter().find(|p| p.string == string))
+                        .map(|position| position.fret.to_string())
+                        .unwrap_or_default();
                     line.push_str(&format!("{cell:-<width$}"));
                 }
                 line.push('|');
@@ -138,5 +162,35 @@ mod tests {
         let positions = vec![Some(Position { string: 0, fret: 0 }); 4];
         let steps: Vec<usize> = build_events(&notes, &positions, &tempo).iter().map(|e| e.step).collect();
         assert_eq!(steps, vec![0, 2, 4]);
+    }
+
+    #[test]
+    fn renders_chords_on_one_step() {
+        let tuning = Tuning::from_spec("standard").unwrap();
+        let events = [event(0, 0, 3), event(0, 1, 5), event(0, 2, 5), event(4, 0, 5)];
+        let tab = render(&events, &tuning, 4);
+        let lines: Vec<&str> = tab.lines().collect();
+        assert!(lines[2].starts_with("D|5-------"), "{tab}");
+        assert!(lines[3].starts_with("A|5-------"), "{tab}");
+        assert!(lines[4].starts_with("E|3-------5"), "{tab}");
+    }
+
+    #[test]
+    fn places_chords_on_the_grid() {
+        let tempo = Tempo { bpm: 120.0, origin: 0.0 };
+        let note = |start: f64, pitch: u8| Note {
+            start,
+            end: start + 0.1,
+            start_frame: 0,
+            end_frame: 0,
+            pitch,
+            amplitude: 0.5,
+        };
+        let chords = vec![vec![note(0.0, 43), note(0.0, 50)], vec![note(0.01, 45)], vec![note(0.5, 45), note(0.5, 52)]];
+        let at = |string, fret| Some(Position { string, fret });
+        let positions = vec![vec![at(0, 3), None], vec![at(0, 5)], vec![at(0, 5), at(1, 7)]];
+        let events = build_chord_events(&chords, &positions, &tempo);
+        let steps: Vec<(usize, usize)> = events.iter().map(|e| (e.step, e.position.string)).collect();
+        assert_eq!(steps, vec![(0, 0), (4, 0), (4, 1)]);
     }
 }
