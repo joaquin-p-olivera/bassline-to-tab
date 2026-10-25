@@ -61,6 +61,13 @@
           class="mode-button rounded-md px-3 py-1.5 text-sm font-medium">Find the note</button>
       </div>
 
+      <div class="flex flex-wrap items-center gap-2 text-sm">
+        <label for="audio-input" class="text-stone-500">Input</label>
+        <select id="audio-input"
+          class="min-w-0 max-w-full flex-1 rounded-lg border border-stone-300 bg-white px-2 py-1.5 text-sm sm:flex-none dark:border-stone-700 dark:bg-stone-900"></select>
+        <span class="w-full text-xs text-stone-500">Plugging the bass into a USB audio interface? Pick it here.</span>
+      </div>
+
       <p id="mic-error" class="hidden rounded-lg bg-red-50 px-3 py-2 text-sm text-red-800 dark:bg-red-950 dark:text-red-200" role="alert"></p>
 
       <div id="meter" class="hidden space-y-3 text-center" aria-live="polite">
