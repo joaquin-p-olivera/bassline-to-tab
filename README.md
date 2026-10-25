@@ -43,7 +43,7 @@ Features:
 | --- | --- | --- |
 | `crates/core` | Rust | Platform-agnostic transcription: Basic Pitch inference (ONNX via [tract](https://github.com/sonos/tract), model embedded), note decoding, onset refinement, tuning and tempo estimation, fret assignment, ASCII tab, MIDI. |
 | `crates/web` | Rust → wasm | `wasm-bindgen` bindings: `separate_bass` (HTDemucs via [demucs-rs](https://github.com/nikhilunni/demucs-rs) on WebGPU) and `transcribe`. |
-| `web/` | HTML/JS | The page (`index.html`, `app.js`), the worker (`worker.js`), the interactive tab (`tab-view.js`), the song history and saved amp takes (`storage.js`) and its export/import file (`archive.js`), the fretboard page with every fret's note (`fretboard.html`, `fretboard.js`), the bass amp page that plays a microphone take through a compressor, a drive pedal and an EQ and can save takes with their settings (`amp.html`, `amp.js`), and the light/dark toggle every page shares (`theme.js`, saved in `localStorage`, defaulting to the system setting). |
+| `web/` | HTML/JS | The page (`index.html`, `app.js`), the worker (`worker.js`), the interactive tab (`tab-view.js`), the song history and saved amp takes (`storage.js`) and its export/import file (`archive.js`), the fretboard page with every fret's note (`fretboard.html`, `fretboard.js`), the bass amp page that plays a microphone take through a compressor, a drive pedal and an EQ and can save takes with their settings, synced with Google Drive (`amp.html`, `amp.js`, `drive-sync.js`, `drive-config.js`), and the light/dark toggle every page shares (`theme.js`, saved in `localStorage`, defaulting to the system setting). |
 | `scripts/build-web.sh` | Bash | Builds the wasm module and assembles the site. |
 | `.github/workflows/web.yml` | CI | On every push: builds the wasm (with clippy) and runs the end-to-end tests in headless Chromium. |
 | `.github/workflows/deploy.yml` | CI | Manual only (Actions → Deploy to GitHub Pages → Run workflow): builds and tests a branch, then deploys it to GitHub Pages. Branches other than `main` need `confirm_non_main: yes`. |
@@ -123,6 +123,45 @@ Everything else is plain JSON. A song without a separated bass has
 - A file with a newer `version` than the app knows is rejected, so a future
   layout change bumps `version` (and the magic's last digit if the header
   itself changes).
+
+## Google Drive sync (amp takes)
+
+The amp page can keep its saved takes in the user's own Google Drive, so
+they show up in any browser signed in to the same Google account. There is
+no server: the page gets a token from Google Identity Services and talks to
+the Drive API directly (`web/drive-sync.js`).
+
+- Scope `drive.file`: the app only sees the files it created, never the rest
+  of the Drive.
+- Each take is one audio file (as recorded, e.g. `.webm`) in a folder
+  "Bassline to Tab · amp takes", playable from Drive. Its `appProperties`
+  hold the take id and its `description` the name, date, duration and
+  control settings as JSON.
+- **Sync now** uploads takes that are only here, downloads those only on
+  Drive, applies the newer name and settings when both have one, and
+  deletes takes that were deleted on another device. While connected (about
+  an hour per sign-in), new takes, renames, sounds and deletions go up right
+  away; after that, pressing Sync now again catches up.
+- **Disconnect** stops syncing in that browser; the takes stay in both places.
+
+### Setting up the OAuth client (once)
+
+The controls stay hidden until `GOOGLE_CLIENT_ID` in `web/drive-config.js`
+is set. To create it:
+
+1. In [Google Cloud Console](https://console.cloud.google.com/), create a
+   project (e.g. "Bassline to Tab").
+2. **APIs & Services → Library**: enable the **Google Drive API**.
+3. **Google Auth Platform** (OAuth consent screen): app name, support email,
+   audience **External**; under **Data access** add the scope
+   `.../auth/drive.file`. While the app is in **Testing**, only the Google
+   accounts listed under **Test users** can sign in, so add yours.
+4. **Clients → Create client**: type **Web application**, authorized
+   JavaScript origins `https://joaquin-p-olivera.github.io` (and
+   `http://localhost:8000` for local testing). No redirect URI is needed.
+5. Paste the client ID (`….apps.googleusercontent.com`) into
+   `web/drive-config.js`. It is not a secret: Google only accepts it from the
+   listed origins.
 
 ## Browser support
 
